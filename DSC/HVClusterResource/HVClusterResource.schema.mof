@@ -1,0 +1,8 @@
+\
+[ClassVersion("1.0.0"), FriendlyName("HVClusterResource")]
+class HVClusterResource : OMI_BaseResource
+{
+  [Key] string ClusterName;
+  [Required] string Nodes[];
+  [Write, ValueMap{"Present","Absent"}, Values{"Present","Absent"}] string Ensure;
+};

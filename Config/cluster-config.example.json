@@ -1,0 +1,45 @@
+{
+  "_comment": "Copy this file to cluster-config.json (or prod.json, staging.json, etc.) and fill in your values. Do NOT commit files containing real credentials.",
+
+  "ClusterName":   "ProdCluster",
+  "Nodes":         ["NODE1", "NODE2"],
+  "ClusterIP":     "10.10.10.10",
+  "WitnessType":   "Disk",
+  "Mode":          "Audit",
+  "ReportsPath":   ".\\Reports",
+  "LogPath":       ".\\Logs",
+  "SkipPreFlight":       false,
+  "SkipNodeValidation":  false,
+
+  "_witnessComment": "Fill in ONLY the block that matches your WitnessType.",
+  "CloudWitnessStorageAccount": "",
+  "CloudWitnessStorageKey":     "",
+  "FileShareWitnessPath":       "",
+
+  "_envComment": "Environments block: key names are passed via -Environment parameter.",
+  "Environments": {
+    "Dev": {
+      "ClusterName":         "DevCluster",
+      "Nodes":               ["DEVNODE1"],
+      "ClusterIP":           "192.168.1.10",
+      "WitnessType":         "None",
+      "Mode":                "Enforce",
+      "SkipNodeValidation":  true
+    },
+    "Staging": {
+      "ClusterName":  "StagingCluster",
+      "Nodes":        ["STGNODE1", "STGNODE2"],
+      "ClusterIP":    "10.20.0.10",
+      "WitnessType":  "Share",
+      "FileShareWitnessPath": "\\\\fileserver\\witness-staging",
+      "Mode":         "Enforce"
+    },
+    "Prod": {
+      "ClusterName":  "ProdCluster",
+      "Nodes":        ["NODE1", "NODE2", "NODE3"],
+      "ClusterIP":    "10.10.10.10",
+      "WitnessType":  "Cloud",
+      "Mode":         "Enforce"
+    }
+  }
+}

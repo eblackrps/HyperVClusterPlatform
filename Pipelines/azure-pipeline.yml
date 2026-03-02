@@ -1,0 +1,122 @@
+trigger:
+  branches:
+    include:
+      - main
+      - develop
+
+pr:
+  branches:
+    include:
+      - main
+
+pool:
+  vmImage: 'windows-latest'
+
+variables:
+  moduleName: 'HyperVClusterPlatform'
+  testResultsPath: '$(Build.ArtifactStagingDirectory)/TestResults.xml'
+  coveragePath: '$(Build.ArtifactStagingDirectory)/coverage.xml'
+
+stages:
+
+# ── Stage 1: Lint ─────────────────────────────────────────────────────────────
+- stage: Lint
+  displayName: 'PSScriptAnalyzer Lint'
+  jobs:
+  - job: Lint
+    steps:
+    - checkout: self
+
+    - task: PowerShell@2
+      displayName: 'Install PSScriptAnalyzer'
+      inputs:
+        targetType: inline
+        script: Install-Module PSScriptAnalyzer -Force -Scope CurrentUser -Repository PSGallery
+
+    - task: PowerShell@2
+      displayName: 'Run PSScriptAnalyzer'
+      inputs:
+        targetType: inline
+        script: |
+          $results = Invoke-ScriptAnalyzer -Path . -Recurse -Severity Error, Warning `
+                       -ExcludeRule PSAvoidUsingWriteHost
+          if ($results) {
+            $results | Format-Table -AutoSize
+            Write-Error "PSScriptAnalyzer found $($results.Count) issue(s)."
+            exit 1
+          }
+          Write-Host "PSScriptAnalyzer: clean." -ForegroundColor Green
+
+# ── Stage 2: Test ─────────────────────────────────────────────────────────────
+- stage: Test
+  displayName: 'Pester Unit Tests'
+  dependsOn: Lint
+  jobs:
+  - job: Pester
+    steps:
+    - checkout: self
+
+    - task: PowerShell@2
+      displayName: 'Install Pester 5'
+      inputs:
+        targetType: inline
+        script: Install-Module Pester -MinimumVersion 5.0 -Force -Scope CurrentUser -Repository PSGallery
+
+    - task: PowerShell@2
+      displayName: 'Run Pester tests'
+      inputs:
+        targetType: inline
+        script: |
+          $config = New-PesterConfiguration
+          $config.Run.Path                = '.\Tests'
+          $config.Output.Verbosity        = 'Detailed'
+          $config.TestResult.Enabled      = $true
+          $config.TestResult.OutputPath   = '$(testResultsPath)'
+          $config.TestResult.OutputFormat = 'NUnitXml'
+          $config.CodeCoverage.Enabled    = $true
+          $config.CodeCoverage.Path       = @('.\Public','.\Private')
+          $config.CodeCoverage.OutputPath = '$(coveragePath)'
+          $result = Invoke-Pester -Configuration $config -PassThru
+          if ($result.FailedCount -gt 0) {
+            Write-Error "$($result.FailedCount) test(s) FAILED."
+            exit 1
+          }
+
+    - task: PublishTestResults@2
+      displayName: 'Publish Pester results'
+      condition: always()
+      inputs:
+        testResultsFormat: 'NUnit'
+        testResultsFiles: '$(testResultsPath)'
+        testRunTitle: 'HyperVClusterPlatform Pester'
+
+    - task: PublishBuildArtifacts@1
+      displayName: 'Publish coverage artifact'
+      condition: always()
+      inputs:
+        pathToPublish: '$(coveragePath)'
+        artifactName: 'CodeCoverage'
+
+# ── Stage 3: Validate manifest ────────────────────────────────────────────────
+- stage: Validate
+  displayName: 'Module Manifest Validation'
+  dependsOn: Test
+  jobs:
+  - job: ManifestCheck
+    steps:
+    - checkout: self
+
+    - task: PowerShell@2
+      displayName: 'Test-ModuleManifest'
+      inputs:
+        targetType: inline
+        script: |
+          $m = Test-ModuleManifest -Path .\HyperVClusterPlatform.psd1
+          Write-Host "Module: $($m.Name)  Version: $($m.Version)"
+          Import-Module .\HyperVClusterPlatform.psd1 -Force
+          $cmds = Get-Command -Module HyperVClusterPlatform
+          Write-Host "Exported: $($cmds.Name -join ', ')"
+          if ('Invoke-HVClusterPlatform' -notin $cmds.Name) {
+            Write-Error "Public function not exported!"
+            exit 1
+          }

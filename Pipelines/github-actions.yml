@@ -1,0 +1,105 @@
+name: HyperVClusterPlatform CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Run mode (Audit or Enforce)'
+        required: false
+        default: 'Audit'
+
+jobs:
+  # ── Job 1: Lint with PSScriptAnalyzer ─────────────────────────────────────
+  lint:
+    name: PSScriptAnalyzer Lint
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install PSScriptAnalyzer
+        shell: pwsh
+        run: Install-Module PSScriptAnalyzer -Force -Scope CurrentUser -Repository PSGallery
+
+      - name: Run PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          $results = Invoke-ScriptAnalyzer -Path . -Recurse -Severity Error, Warning `
+                       -ExcludeRule PSAvoidUsingWriteHost
+          if ($results) {
+            $results | Format-Table -AutoSize
+            Write-Error "PSScriptAnalyzer found $($results.Count) issue(s)."
+            exit 1
+          }
+          else {
+            Write-Host "PSScriptAnalyzer: no issues found." -ForegroundColor Green
+          }
+
+  # ── Job 2: Pester unit tests ───────────────────────────────────────────────
+  test:
+    name: Pester Unit Tests
+    runs-on: windows-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Pester 5
+        shell: pwsh
+        run: Install-Module Pester -MinimumVersion 5.0 -Force -Scope CurrentUser -Repository PSGallery
+
+      - name: Run Pester tests
+        shell: pwsh
+        run: |
+          $config = New-PesterConfiguration
+          $config.Run.Path          = '.\Tests'
+          $config.Output.Verbosity  = 'Detailed'
+          $config.TestResult.Enabled        = $true
+          $config.TestResult.OutputPath     = 'TestResults.xml'
+          $config.TestResult.OutputFormat   = 'NUnitXml'
+          $config.CodeCoverage.Enabled      = $true
+          $config.CodeCoverage.Path         = @('.\Public','.\Private')
+          $config.CodeCoverage.OutputPath   = 'coverage.xml'
+          $result = Invoke-Pester -Configuration $config -PassThru
+          if ($result.FailedCount -gt 0) {
+            Write-Error "Pester: $($result.FailedCount) test(s) FAILED."
+            exit 1
+          }
+
+      - name: Publish test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pester-results
+          path: |
+            TestResults.xml
+            coverage.xml
+
+  # ── Job 3: Module import smoke test ───────────────────────────────────────
+  smoke:
+    name: Module Import Smoke Test
+    runs-on: windows-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify module loads and exports correctly
+        shell: pwsh
+        run: |
+          Import-Module .\HyperVClusterPlatform.psd1 -Force
+          $cmds = Get-Command -Module HyperVClusterPlatform
+          Write-Host "Exported commands: $($cmds.Name -join ', ')"
+          if ('Invoke-HVClusterPlatform' -notin $cmds.Name) {
+            Write-Error "Invoke-HVClusterPlatform not exported!"
+            exit 1
+          }
+          $version = (Get-Module HyperVClusterPlatform).Version
+          Write-Host "Module version: $version" -ForegroundColor Green
+
+      - name: Validate module manifest
+        shell: pwsh
+        run: |
+          $result = Test-ModuleManifest -Path .\HyperVClusterPlatform.psd1
+          Write-Host "Manifest valid: $($result.Name) v$($result.Version)"

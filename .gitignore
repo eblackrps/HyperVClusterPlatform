@@ -1,0 +1,36 @@
+# ── Runtime output (never commit) ─────────────────────────────────────────────
+Reports/
+Logs/
+*.log
+*.html
+
+# Snapshots are runtime JSON — keep the example config, ignore everything else
+# (exception: Config/*.example.json is committed as a template)
+Reports/*.json
+
+# ── PowerShell build artifacts ─────────────────────────────────────────────────
+*.nupkg
+*.zip
+
+# ── Test output ────────────────────────────────────────────────────────────────
+TestResults.xml
+coverage.xml
+
+# ── Secrets — NEVER commit ─────────────────────────────────────────────────────
+Config/prod*.json
+Config/staging*.json
+Config/*-secret*.json
+*.key
+*.pfx
+*.cred
+
+# ── Editor artifacts ───────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.suo
+*.user
+
+# ── OS ─────────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
