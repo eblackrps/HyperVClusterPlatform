@@ -31,6 +31,7 @@ function Invoke-HVCertificationSuite {
     param(
         [Parameter(Mandatory)][string]  $ClusterName,
         [Parameter(Mandatory)][string[]]$Nodes,
+        [ValidateSet('None','Disk','Cloud','Share')][string]$WitnessType = '',
         [string]$ReportsPath              = '.\Reports',
         [switch]$SkipLiveMigrationTest
     )
@@ -131,8 +132,18 @@ function Invoke-HVCertificationSuite {
     Add-Domain 'Security' $secScore @(if ($secretMgmtAvail){'SecretManagement module available.'}else{'Install Microsoft.PowerShell.SecretManagement for full marks.'}) ($secScore -ge 80)
 
     # ── 10. Compliance (drift) ────────────────────────────────────────────────
-    $desired = New-HVDesiredState -ClusterName $ClusterName -Nodes $Nodes -WitnessType 'None'
     $current = Get-HVClusterCurrentState
+    $effectiveWitnessType = $WitnessType
+    if (-not $effectiveWitnessType) {
+        $effectiveWitnessType = switch -Regex ($current.WitnessType) {
+            'Disk'       { 'Disk'; break }
+            'Cloud'      { 'Cloud'; break }
+            'FileShare'  { 'Share'; break }
+            'Share'      { 'Share'; break }
+            default      { 'None' }
+        }
+    }
+    $desired = New-HVDesiredState -ClusterName $ClusterName -Nodes $Nodes -WitnessType $effectiveWitnessType
     $drift   = if ($current) { Get-HVDriftScore -Desired $desired -Current $current } else { [PSCustomObject]@{ Score=100; Details=@('No cluster state.') } }
     $compScore = 100 - $drift.Score
     Add-Domain 'Compliance' $compScore @($drift.Details) ($drift.Score -le 10)

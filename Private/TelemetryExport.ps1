@@ -30,8 +30,8 @@ function Export-HVTelemetry {
         timestamp         = (Get-Date).ToString('o')
         host              = $env:COMPUTERNAME
         module            = 'HyperVClusterPlatform'
-        module_version    = '20.0.0'
-        cluster_name      = $RunResult.ClusterName
+        module_version    = '21.0.0'
+        cluster_name      = if ($RunResult.ClusterName) { $RunResult.ClusterName } elseif ($RunResult.TotalClusters) { 'Fleet' } else { $null }
         mode              = $RunResult.Mode
         drift_score       = $RunResult.DriftScore
         drift_details     = $RunResult.DriftDetails

@@ -1,6 +1,6 @@
 # HyperVClusterPlatform
 
-> **v20.0.0** — Production-hardened Hyper-V cluster automation for **Windows Server 2022** and **Windows Server 2025**
+> **v21.0.0** — Production-hardened Hyper-V cluster automation for **Windows Server 2022** and **Windows Server 2025**
 
 A PowerShell module for fully automated Hyper-V failover cluster deployment, compliance management, health monitoring, and fleet orchestration:
 
@@ -24,7 +24,7 @@ A PowerShell module for fully automated Hyper-V failover cluster deployment, com
 - **JSON telemetry** — structured metrics alongside every HTML report
 - **File-based rotating logs** — timestamped, color-coded, persisted to disk
 - **JSON config files** — environment profiles (Dev / Staging / Prod) with secret-name resolution
-- **Full Pester test suite** — 121 mocked unit tests across 15 test files, no live cluster required
+- **Full Pester test suite** — 127 mocked unit tests across 16 test files, no live cluster required
 - **CI/CD pipelines** — PSScriptAnalyzer lint + Pester + manifest validation + PSGallery publish
 
 ---
@@ -41,20 +41,33 @@ A PowerShell module for fully automated Hyper-V failover cluster deployment, com
 
 ---
 
+## Supported commands
+
+- `Invoke-HVClusterPlatform`
+- `Invoke-HVClusterFleet`
+- `Get-HVClusterHealth`
+- `Invoke-HVHealthAlertPolicy`
+- `Invoke-HVCertificationSuite`
+
+---
+
 ## Folder layout
 
 ```
 HyperVClusterPlatform/
-  HyperVClusterPlatform.psd1          # module manifest (v20.0.0)
+  HyperVClusterPlatform.psd1          # module manifest (v21.0.0)
   HyperVClusterPlatform.psm1          # loader: dot-sources Public + Private
   README.md
   CHANGELOG.md
   ROADMAP.md
+  LICENSE
+  PSScriptAnalyzerSettings.psd1
   .gitignore
   Public/
     Invoke-HVClusterPlatform.ps1      # single-cluster entry point
     Invoke-HVClusterFleet.ps1         # multi-cluster fleet runner
   Private/
+    CommandAliases.ps1                # pins cmdlets to FailoverClusters / Hyper-V
     Logging.ps1                       # file logging + rotation
     DesiredState.ps1                  # desired state builder + live state reader
     Preflight.ps1                     # local machine pre-flight checks
@@ -91,6 +104,7 @@ HyperVClusterPlatform/
     Preflight.Tests.ps1               # pre-flight + node validation unit tests
     Rollback.Tests.ps1                # rollback engine unit tests
     Configuration.Tests.ps1          # config file loader unit tests
+    ComplianceReport.Tests.ps1       # HTML encoding regression tests
     NetworkConfig.Tests.ps1           # adapter classification + drift tests
     VMPlacement.Tests.ps1             # VM placement + drift tests
     StorageConfig.Tests.ps1           # CSV state + storage drift tests
@@ -172,10 +186,10 @@ See [`Config/cluster-config.example.json`](Config/cluster-config.example.json) f
 
 ```powershell
 # Run against every cluster defined in a fleet config file
-Invoke-HVClusterFleet -FleetFile .\Config\fleet.json -Mode Audit
+Invoke-HVClusterFleet -FleetConfigFile .\Config\fleet.json -Mode Audit
 
 # Or pass an explicit list of per-cluster config files
-Invoke-HVClusterFleet -ConfigList @('.\Config\site-a.json','.\Config\site-b.json') -Mode Enforce
+Invoke-HVClusterFleet -ConfigFiles @('.\Config\site-a.json','.\Config\site-b.json') -Mode Enforce
 ```
 
 `Invoke-HVClusterFleet` returns a fleet-level PSCustomObject and writes an HTML roll-up report to `Reports/`.
@@ -203,6 +217,7 @@ Invoke-HVHealthAlertPolicy -AlertThreshold 80 -AlertParams @{
 
 | Property | Type | Description |
 |---|---|---|
+| `ClusterName` | string | Target cluster name used for the run |
 | `Mode` | string | Audit / Enforce / Remediate |
 | `DriftScore` | int | 0 (compliant) to 100 (maximum drift) |
 | `DriftDetails` | string[] | Per-check mismatch descriptions |
@@ -224,7 +239,7 @@ Install-Module Pester -MinimumVersion 5.0 -Force -Scope CurrentUser
 Invoke-Pester .\Tests -Output Detailed
 ```
 
-All 121 tests use mocked cmdlets — no live Hyper-V cluster needed.
+All 127 tests use mocked cmdlets — no live Hyper-V cluster needed.
 
 ---
 
@@ -257,3 +272,9 @@ Get-Command -Module HyperVClusterPlatform
 - **Secrets** — never commit `Config/prod.json` or similar files containing real credentials. The `.gitignore` excludes them by pattern. Use `CloudWitnessStorageKeySecretName` and a registered SecretManagement vault instead.
 - **DSC resource** (`DSC/HVClusterResource`) provides a functional `Get-/Test-/Set-TargetResource` implementation wired to the cluster automation engine.
 - **Certification** — `Invoke-HVCertificationSuite` runs 10 compliance domains and requires all to pass before returning `Certified = $true`. Intended as a production go-live gate.
+
+---
+
+## License
+
+This project is currently distributed under an explicit **all rights reserved** license in [`LICENSE`](LICENSE). If you want to open-source it later, replace that file and update the manifest metadata before publishing another release.

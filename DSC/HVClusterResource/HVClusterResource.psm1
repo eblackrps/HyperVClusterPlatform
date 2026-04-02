@@ -10,6 +10,38 @@ function Write-DSCLog {
     Write-Verbose $line
 }
 
+function Initialize-HVDSCCommandAliases {
+    $commandSpecs = @(
+        @{ Name = 'Add-ClusterDisk';          Module = 'FailoverClusters' }
+        @{ Name = 'Add-ClusterNode';          Module = 'FailoverClusters' }
+        @{ Name = 'Get-Cluster';              Module = 'FailoverClusters' }
+        @{ Name = 'Get-ClusterAvailableDisk'; Module = 'FailoverClusters' }
+        @{ Name = 'Get-ClusterNode';          Module = 'FailoverClusters' }
+        @{ Name = 'Get-ClusterQuorum';        Module = 'FailoverClusters' }
+        @{ Name = 'New-Cluster';              Module = 'FailoverClusters' }
+        @{ Name = 'Remove-Cluster';           Module = 'FailoverClusters' }
+        @{ Name = 'Set-ClusterQuorum';        Module = 'FailoverClusters' }
+    )
+
+    foreach ($moduleName in ($commandSpecs | Select-Object -ExpandProperty Module -Unique)) {
+        if (-not (Get-Module -Name $moduleName) -and (Get-Module -ListAvailable -Name $moduleName)) {
+            try {
+                Import-Module $moduleName -ErrorAction Stop | Out-Null
+            }
+            catch {
+                Write-DSCLog "Could not import preferred module '$moduleName': $($_.Exception.Message)" 'WARN'
+            }
+        }
+    }
+
+    foreach ($commandSpec in $commandSpecs) {
+        $qualified = '{0}\{1}' -f $commandSpec.Module, $commandSpec.Name
+        if (Get-Command $qualified -ErrorAction SilentlyContinue) {
+            Set-Alias -Name $commandSpec.Name -Value $qualified -Scope Script -Force
+        }
+    }
+}
+
 function Get-ClusterSafe {
     Get-Cluster -ErrorAction SilentlyContinue
 }
@@ -34,6 +66,8 @@ function Get-WitnessType {
 
 #endregion
 
+Initialize-HVDSCCommandAliases
+
 function Get-TargetResource {
     <#
     .SYNOPSIS
@@ -47,8 +81,10 @@ function Get-TargetResource {
         [Parameter(Mandatory)][string[]]$Nodes,
         [ValidateSet('None','Disk','Cloud','Share')][string]$WitnessType = 'None',
         [ValidateSet('Present','Absent')][string]$Ensure = 'Present',
-        [string]$ClusterIP        = '',
-        [string]$FileShareWitness = ''
+        [string]$ClusterIP                 = '',
+        [string]$FileShareWitness          = '',
+        [string]$CloudWitnessStorageAccount = '',
+        [string]$CloudWitnessStorageKey     = ''
     )
 
     Write-DSCLog "Get-TargetResource: $ClusterName"
@@ -92,8 +128,10 @@ function Test-TargetResource {
         [Parameter(Mandatory)][string[]]$Nodes,
         [ValidateSet('None','Disk','Cloud','Share')][string]$WitnessType = 'None',
         [ValidateSet('Present','Absent')][string]$Ensure = 'Present',
-        [string]$ClusterIP        = '',
-        [string]$FileShareWitness = ''
+        [string]$ClusterIP                 = '',
+        [string]$FileShareWitness          = '',
+        [string]$CloudWitnessStorageAccount = '',
+        [string]$CloudWitnessStorageKey     = ''
     )
 
     Write-DSCLog "Test-TargetResource: $ClusterName"
@@ -149,8 +187,10 @@ function Set-TargetResource {
         [Parameter(Mandatory)][string[]]$Nodes,
         [ValidateSet('None','Disk','Cloud','Share')][string]$WitnessType = 'None',
         [ValidateSet('Present','Absent')][string]$Ensure = 'Present',
-        [string]$ClusterIP        = '',
-        [string]$FileShareWitness = ''
+        [string]$ClusterIP                 = '',
+        [string]$FileShareWitness          = '',
+        [string]$CloudWitnessStorageAccount = '',
+        [string]$CloudWitnessStorageKey     = ''
     )
 
     Write-DSCLog "Set-TargetResource: $ClusterName (Ensure=$Ensure)"
@@ -201,6 +241,12 @@ function Set-TargetResource {
             if ($FileShareWitness) {
                 Set-ClusterQuorum -NodeAndFileShareMajority $FileShareWitness -ErrorAction Stop
             }
+        }
+        'Cloud' {
+            if (-not $CloudWitnessStorageAccount -or -not $CloudWitnessStorageKey) {
+                throw "WitnessType='Cloud' requires CloudWitnessStorageAccount and CloudWitnessStorageKey."
+            }
+            Set-ClusterQuorum -CloudWitness -AccountName $CloudWitnessStorageAccount -AccessKey $CloudWitnessStorageKey -ErrorAction Stop
         }
     }
 

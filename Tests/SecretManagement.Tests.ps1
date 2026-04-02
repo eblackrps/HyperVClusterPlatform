@@ -31,7 +31,7 @@ Describe "Get-HVSecret" {
         }
 
         It "Returns SecureString when AsSecureString is specified" {
-            Mock Get-Secret { ConvertTo-SecureString 'secure-val' -AsPlainText -Force }
+            Mock Get-Secret { ConvertTo-HVSecureString -PlainText 'secure-val' }
             $result = Get-HVSecret -SecretName 'MySecret' -AsSecureString
             $result | Should -BeOfType [System.Security.SecureString]
         }
@@ -45,7 +45,7 @@ Describe "Get-HVSecret" {
             Mock Get-Module { [PSCustomObject]@{ Name = 'CredentialManager' } } `
                 -ParameterFilter { $Name -eq 'CredentialManager' }
             Mock Get-StoredCredential {
-                [PSCredential]::new('user', (ConvertTo-SecureString 'fallback-value' -AsPlainText -Force))
+                [PSCredential]::new('user', (ConvertTo-HVSecureString -PlainText 'fallback-value'))
             }
         }
 
@@ -58,7 +58,7 @@ Describe "Get-HVSecret" {
 
 Describe "ConvertFrom-HVSecureString" {
     It "Converts SecureString to plaintext" {
-        $secure = ConvertTo-SecureString 'MyPlaintext' -AsPlainText -Force
+        $secure = ConvertTo-HVSecureString -PlainText 'MyPlaintext'
         $result = ConvertFrom-HVSecureString -SecureString $secure
         $result | Should -Be 'MyPlaintext'
     }

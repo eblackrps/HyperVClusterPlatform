@@ -38,8 +38,18 @@ stages:
       inputs:
         targetType: inline
         script: |
-          $results = Invoke-ScriptAnalyzer -Path . -Recurse -Severity Error, Warning `
-                       -ExcludeRule PSAvoidUsingWriteHost
+          $paths = @(
+            '.\HyperVClusterPlatform.psd1'
+            '.\HyperVClusterPlatform.psm1'
+            '.\Public'
+            '.\Private'
+            '.\DSC'
+            '.\Scripts'
+          )
+          $results = foreach ($path in $paths) {
+            Invoke-ScriptAnalyzer -Path $path -Recurse -Severity Error, Warning `
+              -Settings .\PSScriptAnalyzerSettings.psd1
+          }
           if ($results) {
             $results | Format-Table -AutoSize
             Write-Error "PSScriptAnalyzer found $($results.Count) issue(s)."
@@ -116,7 +126,15 @@ stages:
           Import-Module .\HyperVClusterPlatform.psd1 -Force
           $cmds = Get-Command -Module HyperVClusterPlatform
           Write-Host "Exported: $($cmds.Name -join ', ')"
-          if ('Invoke-HVClusterPlatform' -notin $cmds.Name) {
-            Write-Error "Public function not exported!"
+          $required = @(
+            'Invoke-HVClusterPlatform'
+            'Invoke-HVClusterFleet'
+            'Get-HVClusterHealth'
+            'Invoke-HVHealthAlertPolicy'
+            'Invoke-HVCertificationSuite'
+          )
+          $missing = $required | Where-Object { $_ -notin $cmds.Name }
+          if ($missing) {
+            Write-Error "Required public exports missing: $($missing -join ', ')"
             exit 1
           }

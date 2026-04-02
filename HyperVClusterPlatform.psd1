@@ -1,6 +1,6 @@
 @{
     RootModule        = 'HyperVClusterPlatform.psm1'
-    ModuleVersion     = '20.0.0'
+    ModuleVersion     = '21.0.0'
     GUID              = 'b5c96ad8-5ffb-4f70-9e3c-3e0ff1f31d1f'
     Author            = 'E. Black'
     CompanyName       = ''
@@ -14,6 +14,9 @@
     FunctionsToExport = @(
         'Invoke-HVClusterPlatform'
         'Invoke-HVClusterFleet'
+        'Get-HVClusterHealth'
+        'Invoke-HVHealthAlertPolicy'
+        'Invoke-HVCertificationSuite'
     )
     CmdletsToExport   = @()
     VariablesToExport = @()
@@ -24,6 +27,7 @@
         'Public\Invoke-HVClusterPlatform.ps1'
         'Public\Invoke-HVClusterFleet.ps1'
         'Private\Logging.ps1'
+        'Private\CommandAliases.ps1'
         'Private\DesiredState.ps1'
         'Private\Preflight.ps1'
         'Private\NodeValidation.ps1'
@@ -50,24 +54,16 @@
             Tags         = @('Hyper-V','FailoverClusters','Compliance','Automation','DSC',
                              'WS2022','WS2025','LiveMigration','DisasterRecovery','FleetManagement',
                              'HealthMonitoring','SecretManagement','Certification')
-            LicenseUri   = 'https://github.com/eblackrps/Hyper-v_cluster_scaffold/blob/main/LICENSE'
-            ProjectUri   = 'https://github.com/eblackrps/Hyper-v_cluster_scaffold'
+            LicenseUri   = 'https://github.com/eblackrps/HyperVClusterPlatform/blob/main/LICENSE'
+            ProjectUri   = 'https://github.com/eblackrps/HyperVClusterPlatform'
             ReleaseNotes = @'
-v20.0.0 — Full platform release (v9-v20 combined):
-  - v9:  NetworkConfig     — adapter classification, cluster network roles, live migration networks
-  - v10: VMPlacement       — preferred owners, anti-affinity groups, placement drift scoring
-  - v11: DSC resource      — full Get/Test/Set-TargetResource, updated schema.mof
-  - v12: StorageConfig     — CSV enumeration, add/rename CSVs, storage drift scoring
-  - v13: HealthCheck       — structured cluster health (Healthy/Warning/Critical), per-node/CSV/VM
-  - v13: Alerting          — email, Teams Adaptive Card, Slack webhook, Windows Event Log
-  - v14: SecretManagement  — SecretManagement vault, CredentialManager fallback, Resolve-HVConfigSecrets
-  - v15: Fleet             — Invoke-HVClusterFleet, parallel PS7+ execution, fleet HTML report
-  - v15: TelemetryExport   — NDJSON structured events, drift trend analysis
-  - v16: ComplianceReport  — Chart.js trend chart, per-check detail table, JSON telemetry alongside HTML
-  - v17: Scripts           — Update-ModuleVersion.ps1, New-Release.ps1 for PSGallery/GitHub automation
-  - v18: LiveMigration     — readiness checks, Kerberos/CredSSP config, live migration orchestration
-  - v19: DisasterRecovery  — DR snapshot with Hyper-V Replica status, readiness checks, failover orchestration
-  - v20: CertificationSuite — 10-domain production certification with HTML report
+v21.0.0 — Production hardening release:
+  - Pinned cluster and Hyper-V command resolution to Windows modules to avoid VMware cmdlet collisions
+  - Restored end-to-end secret-backed config loading with *SecretName support and redacted logging
+  - Fixed HTML report detail encoding to eliminate duplicate output and raw markup injection
+  - Added Cloud witness support to the DSC resource and corrected certification witness handling
+  - Exported health, alert policy, and certification commands as supported operational entry points
+  - Added production-focused PSScriptAnalyzer settings, CI validation updates, and repository cleanup
 '@
         }
     }

@@ -5,6 +5,27 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [21.0.0] — 2026-04-02
+
+### Added
+- **Public operational exports**: `Get-HVClusterHealth`, `Invoke-HVHealthAlertPolicy`, and `Invoke-HVCertificationSuite` are now supported exports alongside the main platform and fleet entry points.
+- **`Tests/ComplianceReport.Tests.ps1`**: Regression coverage for HTML-encoded drift details so report output cannot duplicate entries or emit raw markup.
+- **`LICENSE`** and **`PSScriptAnalyzerSettings.psd1`**: production repository metadata and lint settings aligned to the maintained code surface.
+
+### Fixed
+- **Command resolution hardening**: pinned FailoverClusters and Hyper-V cmdlets to the intended Windows modules so VMware PowerCLI command collisions no longer break cluster, rollback, or live-migration flows.
+- **Secret-backed config loading**: preserved `*SecretName` properties through config import, resolved them during platform execution, and redacted sensitive override values in logs.
+- **Compliance report safety**: drift details are now encoded exactly once in HTML output.
+- **DSC cloud witness support**: `HVClusterResource` now supports Cloud witness credentials and can converge cloud quorum configurations.
+- **Certification compliance scoring**: compliance checks now use the supplied or current witness type instead of hardcoding `None`.
+- **Platform result shape**: `Invoke-HVClusterPlatform` now returns `ClusterName`, allowing fleet reporting and telemetry exports to retain identity.
+
+### Changed
+- **Module manifest**: Version bumped to `21.0.0`.
+- **Fleet, telemetry, and release infrastructure**: CI now lint-checks maintained production code paths, generated local test output is no longer tracked, and release metadata reflects the hardened production name.
+
+---
+
 ## [20.0.0] — 2026-03-02
 
 ### Added
@@ -64,8 +85,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [15.0.0] — 2026-03-02
 
 ### Added
-- **`Invoke-HVClusterFleet`** (`Public/Invoke-HVClusterFleet.ps1`): Multi-cluster fleet runner. Accepts a fleet config JSON file (`-FleetFile`) or an explicit array of per-cluster config paths (`-ConfigList`). Runs each cluster sequentially (or in parallel with `-Parallel` on PS 7). Aggregates per-cluster drift scores, statuses, and errors into a fleet HTML roll-up report written to `Reports/`.
-- **`Tests/Fleet.Tests.ps1`**: Unit tests for FleetFile/ConfigList parameter sets, fleet report generation, and per-cluster error handling.
+- **`Invoke-HVClusterFleet`** (`Public/Invoke-HVClusterFleet.ps1`): Multi-cluster fleet runner. Accepts a fleet config JSON file (`-FleetConfigFile`) or an explicit array of per-cluster config paths (`-ConfigFiles`). Runs each cluster sequentially (or in parallel with `-Parallel` on PS 7). Aggregates per-cluster drift scores, statuses, and errors into a fleet HTML roll-up report written to `Reports/`.
+- **`Tests/Fleet.Tests.ps1`**: Unit tests for fleet-config-file and explicit-config-list parameter sets, fleet report generation, and per-cluster error handling.
 
 ### Changed
 - **Module manifest**: Version bumped to `15.0.0`. Added `Invoke-HVClusterFleet` to `FunctionsToExport`.
@@ -171,4 +192,4 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [7.0.0] — 2026-02-23
 
 ### Added
-- Initial scaffold: Audit/Enforce/Remediate modes, drift scoring (basic), HTML report, pre-change snapshot hook, rollback stub, Pester stub, GitHub Actions and Azure Pipeline stubs, DSC resource skeleton.
+- Initial platform foundation: Audit/Enforce/Remediate modes, drift scoring (basic), HTML report, pre-change snapshot hook, rollback stub, Pester stub, GitHub Actions and Azure Pipeline stubs, DSC resource skeleton.

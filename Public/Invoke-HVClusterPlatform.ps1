@@ -102,6 +102,9 @@ function Invoke-HVClusterPlatform {
     # ── 0. Load and merge config file ──────────────────────────────────────────
     if ($ConfigFile) {
         $cfg = Import-HVClusterConfig -ConfigPath $ConfigFile -Environment $Environment
+        if (Get-Command Resolve-HVConfigSecrets -ErrorAction SilentlyContinue) {
+            $cfg = Resolve-HVConfigSecrets -Config $cfg
+        }
         if (-not $ClusterName)  { $ClusterName  = $cfg.ClusterName  }
         if (-not $Nodes)        { $Nodes        = $cfg.Nodes        }
         if (-not $ClusterIP)    { $ClusterIP    = $cfg.ClusterIP    }
@@ -122,10 +125,11 @@ function Invoke-HVClusterPlatform {
     # ── 1. Initialize logging ──────────────────────────────────────────────────
     Initialize-HVLogging -LogPath $LogPath
 
-    Write-HVLog -Message "=== HyperVClusterPlatform v8.0.0 ===" -Level 'INFO'
+    Write-HVLog -Message "=== HyperVClusterPlatform v21.0.0 ===" -Level 'INFO'
     Write-HVLog -Message "Mode=$Mode  Cluster=$ClusterName  Witness=$WitnessType  Nodes=[$($Nodes -join ',')]" -Level 'INFO'
 
     $result = [ordered]@{
+        ClusterName           = $ClusterName
         Mode                  = $Mode
         DriftScore            = 100
         DriftDetails          = @()

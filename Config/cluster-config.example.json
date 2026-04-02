@@ -14,6 +14,7 @@
   "_witnessComment": "Fill in ONLY the block that matches your WitnessType.",
   "CloudWitnessStorageAccount": "",
   "CloudWitnessStorageKey":     "",
+  "CloudWitnessStorageKeySecretName": "",
   "FileShareWitnessPath":       "",
 
   "_envComment": "Environments block: key names are passed via -Environment parameter.",
@@ -39,6 +40,8 @@
       "Nodes":        ["NODE1", "NODE2", "NODE3"],
       "ClusterIP":    "10.10.10.10",
       "WitnessType":  "Cloud",
+      "CloudWitnessStorageAccount": "prodstorageacct",
+      "CloudWitnessStorageKeySecretName": "ProdCloudWitnessKey",
       "Mode":         "Enforce"
     }
   }

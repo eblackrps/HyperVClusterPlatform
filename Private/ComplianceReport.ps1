@@ -37,15 +37,20 @@ function New-HVComplianceReport {
     $status   = if ($score -eq 0) { 'Compliant' } elseif ($score -lt 50) { 'Minor Drift' } else { 'Critical Drift' }
     $cssClass = if ($score -eq 0) { 'good'       } elseif ($score -lt 50) { 'warn'        } else { 'bad'            }
     $osText   = if ($OSProfile)   { "$($OSProfile.DisplayName) (Build $($OSProfile.Build))" } else { 'N/A' }
+    $encode   = [System.Net.WebUtility]
 
     $detailRows = if ($detail -and $detail.Count -gt 0) {
-        $detail | ForEach-Object { "<li>$([System.Web.HttpUtility]::HtmlEncode($_))</li>" }
-        $detail | ForEach-Object { "<li>$_</li>" }
+        $detail | ForEach-Object { "<li>$($encode::HtmlEncode([string]$_))</li>" }
     }
     else {
         @('<li>No drift detected.</li>')
     }
     $detailHtml = $detailRows -join "`n"
+
+    $clusterText = $encode::HtmlEncode([string]$ClusterName)
+    $modeText    = $encode::HtmlEncode([string]$Mode)
+    $osText      = $encode::HtmlEncode([string]$osText)
+    $generated   = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss zzz')
 
     $html = @"
 <!DOCTYPE html>
@@ -75,10 +80,10 @@ function New-HVComplianceReport {
   <h1>Hyper-V Cluster Compliance Report</h1>
   <div class="card">
     <div class="meta">
-      <strong>Cluster:</strong> $ClusterName &nbsp;|&nbsp;
-      <strong>Mode:</strong> $Mode &nbsp;|&nbsp;
+      <strong>Cluster:</strong> $clusterText &nbsp;|&nbsp;
+      <strong>Mode:</strong> $modeText &nbsp;|&nbsp;
       <strong>OS:</strong> $osText<br>
-      <strong>Generated:</strong> $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') UTC
+      <strong>Generated:</strong> $generated
     </div>
     <hr>
     <p><span class="score $cssClass">$score / 100</span> &nbsp; <span class="badge $cssClass">$status</span></p>

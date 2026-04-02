@@ -131,7 +131,12 @@ function Send-HVAlert {
         try {
             $source = 'HyperVClusterPlatform'
             $sourceExists = $false
-            try { $sourceExists = [System.Diagnostics.EventLog]::SourceExists($source) } catch { }
+            try {
+                $sourceExists = [System.Diagnostics.EventLog]::SourceExists($source)
+            }
+            catch {
+                Write-HVLog -Message "Could not query event log source '$source': $($_.Exception.Message)" -Level 'WARN'
+            }
             if (-not $sourceExists) {
                 New-EventLog -LogName Application -Source $source -ErrorAction SilentlyContinue
             }

@@ -109,7 +109,12 @@ function Test-HVNodeReadiness {
                 $warnings.Add("[$node] Could not check features remotely: $($_.Exception.Message)")
             }
 
-            try { Remove-PSSession -Session $session -ErrorAction SilentlyContinue } catch { }
+            try {
+                Remove-PSSession -Session $session -ErrorAction SilentlyContinue
+            }
+            catch {
+                Write-HVLog -Message "[$node] Could not remove PSSession cleanly: $($_.Exception.Message)" -Level 'WARN'
+            }
         }
         catch {
             $failures.Add("[$node] WinRM connection failed: $($_.Exception.Message). Ensure WinRM is enabled and firewall allows it.")

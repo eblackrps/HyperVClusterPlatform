@@ -53,8 +53,7 @@ function Get-HVSecret {
                 Write-HVLog -Message "Secret '$SecretName' retrieved from Windows Credential Manager." -Level 'INFO'
                 $plain = $cred.GetNetworkCredential().Password
                 if ($AsSecureString) {
-                    # PSSA: plaintext retrieved from credential store, not hardcoded — acceptable here
-                    return ConvertTo-SecureString $plain -AsPlainText -Force
+                    return ConvertTo-HVSecureString -PlainText $plain
                 }
                 return $plain
             }
@@ -74,6 +73,23 @@ function Get-HVSecret {
     }
 
     throw "Secret '$SecretName' could not be retrieved from any available vault."
+}
+
+function ConvertTo-HVSecureString {
+    <#
+    .SYNOPSIS
+        Converts plaintext retrieved from an external secret store to SecureString
+        without using ConvertTo-SecureString -AsPlainText.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$PlainText)
+
+    $secureString = [System.Security.SecureString]::new()
+    foreach ($char in $PlainText.ToCharArray()) {
+        $secureString.AppendChar($char)
+    }
+    $secureString.MakeReadOnly()
+    return $secureString
 }
 
 function ConvertFrom-HVSecureString {

@@ -123,5 +123,42 @@ Describe "Import-HVClusterConfig" {
             $result.Mode | Should -Be 'Audit'   # default unchanged
             Remove-Item $cfg -Force
         }
+
+        It "Preserves SecretName fields for later vault resolution" {
+            $cfg = New-TestConfig -Overrides @{
+                WitnessType                  = 'Cloud'
+                CloudWitnessStorageAccount   = 'acct01'
+                CloudWitnessStorageKeySecretName = 'CloudKey'
+            }
+            $result = Import-HVClusterConfig -ConfigPath $cfg
+            $result.CloudWitnessStorageKeySecretName | Should -Be 'CloudKey'
+            Remove-Item $cfg -Force
+        }
+
+        It "Redacts sensitive override values in logs" {
+            $base = @{
+                ClusterName  = 'TestCluster'
+                Nodes        = @('NODE1','NODE2')
+                ClusterIP    = '10.0.0.10'
+                WitnessType  = 'Cloud'
+                CloudWitnessStorageAccount = 'acct01'
+                CloudWitnessStorageKey     = 'top-secret-key'
+                Environments = @{
+                    Prod = @{
+                        CloudWitnessStorageKey = 'prod-secret-key'
+                    }
+                }
+            }
+            $path = [System.IO.Path]::GetTempFileName() -replace '\.tmp$','.json'
+            $base | ConvertTo-Json -Depth 5 | Set-Content $path
+
+            Import-HVClusterConfig -ConfigPath $path -Environment 'Prod' | Out-Null
+
+            Should -Invoke Write-HVLog -ParameterFilter {
+                $Message -match "CloudWitnessStorageKey = '<redacted>'"
+            } -Times 1
+
+            Remove-Item $path -Force
+        }
     }
 }

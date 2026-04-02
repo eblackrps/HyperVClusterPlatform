@@ -1,3 +1,36 @@
+function Test-HVConfigCommentKey {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Name)
+
+    return ($Name -eq 'Environments' -or $Name.StartsWith('_'))
+}
+
+function Test-HVSensitiveConfigKey {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Name)
+
+    return ($Name -match '(?i)(secret|key|password|token|credential)')
+}
+
+function Test-HVConfigAnyValue {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Config,
+        [Parameter(Mandatory)][string[]]$Keys
+    )
+
+    foreach ($key in $Keys) {
+        if ($Config.Contains($key)) {
+            $value = $Config[$key]
+            if ($null -ne $value -and (-not ($value -is [string]) -or -not [string]::IsNullOrWhiteSpace($value))) {
+                return $true
+            }
+        }
+    }
+
+    return $false
+}
+
 function Import-HVClusterConfig {
     <#
     .SYNOPSIS
@@ -31,31 +64,56 @@ function Import-HVClusterConfig {
         throw "Failed to parse config file '$ConfigPath': $($_.Exception.Message)"
     }
 
-    # Start with top-level defaults
-    $cfg = [ordered]@{
-        ClusterName                  = $raw.ClusterName
-        Nodes                        = $raw.Nodes
-        ClusterIP                    = $raw.ClusterIP
-        WitnessType                  = $raw.WitnessType
-        Mode                         = if ($raw.Mode)         { $raw.Mode }         else { 'Audit' }
-        ReportsPath                  = if ($raw.ReportsPath)  { $raw.ReportsPath }  else { '.\Reports' }
-        LogPath                      = if ($raw.LogPath)      { $raw.LogPath }      else { '.\Logs' }
-        SkipPreFlight                = if ($null -ne $raw.SkipPreFlight) { [bool]$raw.SkipPreFlight } else { $false }
-        SkipNodeValidation           = if ($null -ne $raw.SkipNodeValidation) { [bool]$raw.SkipNodeValidation } else { $false }
-        CloudWitnessStorageAccount   = $raw.CloudWitnessStorageAccount
-        CloudWitnessStorageKey       = $raw.CloudWitnessStorageKey
-        FileShareWitnessPath         = $raw.FileShareWitnessPath
+    $cfg = [ordered]@{}
+    foreach ($prop in $raw.PSObject.Properties) {
+        if (Test-HVConfigCommentKey -Name $prop.Name) {
+            continue
+        }
+        $cfg[$prop.Name] = $prop.Value
     }
+
+    $defaultValues = [ordered]@{
+        Mode               = 'Audit'
+        ReportsPath        = '.\Reports'
+        LogPath            = '.\Logs'
+        SkipPreFlight      = $false
+        SkipNodeValidation = $false
+    }
+    foreach ($key in $defaultValues.Keys) {
+        if (-not $cfg.Contains($key) -or
+            $null -eq $cfg[$key] -or
+            ($cfg[$key] -is [string] -and [string]::IsNullOrWhiteSpace($cfg[$key]))) {
+            $cfg[$key] = $defaultValues[$key]
+        }
+    }
+
+    $cfg['SkipPreFlight'] = [bool]$cfg['SkipPreFlight']
+    $cfg['SkipNodeValidation'] = [bool]$cfg['SkipNodeValidation']
 
     # Apply environment-specific overrides
     if ($Environment -and $raw.Environments -and $raw.Environments.$Environment) {
         $envBlock = $raw.Environments.$Environment
         Write-HVLog -Message "Config: applying '$Environment' environment overrides." -Level 'INFO'
         foreach ($prop in $envBlock.PSObject.Properties) {
-            if ($cfg.Contains($prop.Name)) {
-                Write-HVLog -Message "Config override: $($prop.Name) = '$($prop.Value)'" -Level 'INFO'
-                $cfg[$prop.Name] = $prop.Value
+            if (Test-HVConfigCommentKey -Name $prop.Name) {
+                continue
             }
+            $cfg[$prop.Name] = $prop.Value
+
+            $displayValue = if (Test-HVSensitiveConfigKey -Name $prop.Name) {
+                '<redacted>'
+            }
+            elseif ($prop.Value -is [System.Array]) {
+                '[' + (($prop.Value | ForEach-Object { "$_" }) -join ', ') + ']'
+            }
+            elseif ($null -eq $prop.Value) {
+                '<null>'
+            }
+            else {
+                "$($prop.Value)"
+            }
+
+            Write-HVLog -Message "Config override: $($prop.Name) = '$displayValue'" -Level 'INFO'
         }
     }
 
@@ -77,10 +135,12 @@ function Import-HVClusterConfig {
         throw "Config validation error: Mode must be one of: $($validModes -join ', '). Got: '$($cfg['Mode'])'."
     }
 
-    if ($cfg['WitnessType'] -eq 'Cloud' -and (-not $cfg['CloudWitnessStorageAccount'] -or -not $cfg['CloudWitnessStorageKey'])) {
-        throw "Config validation error: WitnessType='Cloud' requires CloudWitnessStorageAccount and CloudWitnessStorageKey."
+    if ($cfg['WitnessType'] -eq 'Cloud' -and
+        (-not (Test-HVConfigAnyValue -Config $cfg -Keys @('CloudWitnessStorageAccount','CloudWitnessStorageAccountSecretName')) -or
+         -not (Test-HVConfigAnyValue -Config $cfg -Keys @('CloudWitnessStorageKey','CloudWitnessStorageKeySecretName')))) {
+        throw "Config validation error: WitnessType='Cloud' requires CloudWitnessStorageAccount plus CloudWitnessStorageKey or CloudWitnessStorageKeySecretName."
     }
-    if ($cfg['WitnessType'] -eq 'Share' -and -not $cfg['FileShareWitnessPath']) {
+    if ($cfg['WitnessType'] -eq 'Share' -and -not (Test-HVConfigAnyValue -Config $cfg -Keys @('FileShareWitnessPath','FileShareWitnessPathSecretName'))) {
         throw "Config validation error: WitnessType='Share' requires FileShareWitnessPath."
     }
 

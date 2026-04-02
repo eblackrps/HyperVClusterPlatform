@@ -114,6 +114,10 @@ function Set-HVLiveMigrationConfig {
                     Write-HVLog -Message "[$node] Setting max simultaneous migrations=$MaxSimultaneous." -Level 'INFO'
                     Set-VMHost -ComputerName $node -MaximumVirtualMachineMigrations $MaxSimultaneous -ErrorAction Stop
                 }
+
+                if ($MaxBandwidthMbps -gt 0) {
+                    Write-HVLog -Message "[$node] MaxBandwidthMbps=$MaxBandwidthMbps requested. Hyper-V bandwidth shaping is not configured by Set-VMHost; use SMB/QoS policies for enforcement." -Level 'WARN'
+                }
             }
 
             Write-HVLog -Message "[$node] Live migration config applied." -Level 'INFO'

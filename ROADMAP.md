@@ -1,7 +1,19 @@
 # Roadmap
 
-Thirteen completed development rounds delivering a fully production-ready HyperVClusterPlatform.
+Fourteen completed development rounds delivering a fully production-ready HyperVClusterPlatform.
 Each round represents a discrete, shippable improvement.
+
+---
+
+## Round 14 — v21.0.0 ✅ RELEASED
+
+Production hardening and release cleanup:
+- Pinned FailoverClusters and Hyper-V command resolution to the Windows modules used by the platform
+- Fixed end-to-end secret-backed config loading and redacted sensitive override logging
+- Added Cloud witness support to the DSC resource
+- Corrected certification witness handling and compliance report HTML encoding
+- Promoted health, alert policy, and certification commands into the supported public export surface
+- Added production-focused lint settings, a repository license file, and removed tracked generated test output
 
 ---
 
@@ -88,7 +100,7 @@ Secret management integration — eliminate cleartext credentials from config fi
 
 Multi-cluster fleet orchestration:
 - `Public/Invoke-HVClusterFleet.ps1`
-  - `-FleetFile` or `-ConfigList` parameter sets
+- `-FleetConfigFile` or `-ConfigFiles` parameter sets
   - Sequential or `-Parallel` (PS 7) execution
   - Fleet HTML roll-up report with per-cluster drift scores
 - `Tests/Fleet.Tests.ps1`
