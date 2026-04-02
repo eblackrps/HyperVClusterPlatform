@@ -5,6 +5,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [21.0.1] — 2026-04-02
+
+### Fixed
+- **GitHub Actions activation**: moved the CI workflow into `.github/workflows/ci.yml` so GitHub executes lint, Pester, and smoke validation on pushes and pull requests.
+- **GitHub-hosted Pester execution**: corrected the workflow to use `Run.PassThru` in the Pester configuration object so the test job runs cleanly on hosted runners and publishes artifacts reliably.
+- **Workflow runtime currency**: updated GitHub Actions dependencies to `actions/checkout@v6` and `actions/upload-artifact@v7`.
+
+### Changed
+- **Module manifest**: Version bumped to `21.0.1`.
+- **Release metadata**: README, roadmap, and in-module version banners now align with the current patch release.
+
+---
+
 ## [21.0.0] — 2026-04-02
 
 ### Added

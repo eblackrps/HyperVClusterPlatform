@@ -4,7 +4,7 @@
     bumping the module version, committing, tagging, pushing, and publishing via gh CLI.
 
 .PARAMETER Version
-    Explicit version string (e.g. '21.0.0'). If omitted, uses current manifest version.
+    Explicit version string (e.g. '21.0.1'). If omitted, uses current manifest version.
 
 .PARAMETER BumpType
     Major | Minor | Patch — auto-bumps if -Version not specified.
@@ -13,7 +13,7 @@
     Simulate all steps without writing files, committing, or pushing.
 
 .EXAMPLE
-    .\Scripts\New-Release.ps1 -Version 21.0.0
+    .\Scripts\New-Release.ps1 -Version 21.0.1
     .\Scripts\New-Release.ps1 -BumpType Minor -DryRun
 #>
 [CmdletBinding()]

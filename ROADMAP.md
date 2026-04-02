@@ -1,7 +1,17 @@
 # Roadmap
 
-Fourteen completed development rounds delivering a fully production-ready HyperVClusterPlatform.
+Fifteen completed development rounds delivering a fully production-ready HyperVClusterPlatform.
 Each round represents a discrete, shippable improvement.
+
+---
+
+## Round 15 — v21.0.1 ✅ RELEASED
+
+Release alignment and CI activation:
+- Moved the GitHub Actions workflow into `.github/workflows/ci.yml` so remote CI is active
+- Corrected hosted-runner Pester configuration and artifact publishing
+- Refreshed workflow dependencies to current supported action versions
+- Aligned manifest, README, and release metadata with the published patch version
 
 ---
 

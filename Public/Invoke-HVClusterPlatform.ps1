@@ -125,7 +125,7 @@ function Invoke-HVClusterPlatform {
     # ── 1. Initialize logging ──────────────────────────────────────────────────
     Initialize-HVLogging -LogPath $LogPath
 
-    Write-HVLog -Message "=== HyperVClusterPlatform v21.0.0 ===" -Level 'INFO'
+    Write-HVLog -Message "=== HyperVClusterPlatform v21.0.1 ===" -Level 'INFO'
     Write-HVLog -Message "Mode=$Mode  Cluster=$ClusterName  Witness=$WitnessType  Nodes=[$($Nodes -join ',')]" -Level 'INFO'
 
     $result = [ordered]@{

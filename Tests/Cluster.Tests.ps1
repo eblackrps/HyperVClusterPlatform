@@ -38,8 +38,8 @@ Describe "Module loads cleanly" {
         $exported | Should -Not -Contain 'New-HVClusterSnapshot'
     }
 
-    It "Module version is 21.0.0" {
-        (Get-Module HyperVClusterPlatform).Version.ToString() | Should -Be '21.0.0'
+    It "Module version is 21.0.1" {
+        (Get-Module HyperVClusterPlatform).Version.ToString() | Should -Be '21.0.1'
     }
 }
 

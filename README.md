@@ -1,6 +1,6 @@
 # HyperVClusterPlatform
 
-> **v21.0.0** — Production-hardened Hyper-V cluster automation for **Windows Server 2022** and **Windows Server 2025**
+> **v21.0.1** — Production-hardened Hyper-V cluster automation for **Windows Server 2022** and **Windows Server 2025**
 
 A PowerShell module for fully automated Hyper-V failover cluster deployment, compliance management, health monitoring, and fleet orchestration:
 
@@ -55,7 +55,7 @@ A PowerShell module for fully automated Hyper-V failover cluster deployment, com
 
 ```
 HyperVClusterPlatform/
-  HyperVClusterPlatform.psd1          # module manifest (v21.0.0)
+  HyperVClusterPlatform.psd1          # module manifest (v21.0.1)
   HyperVClusterPlatform.psm1          # loader: dot-sources Public + Private
   README.md
   CHANGELOG.md

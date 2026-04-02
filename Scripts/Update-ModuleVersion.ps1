@@ -17,7 +17,7 @@
 
 .EXAMPLE
     .\Scripts\Update-ModuleVersion.ps1 -BumpType Minor
-    .\Scripts\Update-ModuleVersion.ps1 -ExplicitVersion 21.0.0
+    .\Scripts\Update-ModuleVersion.ps1 -ExplicitVersion 21.0.1
 #>
 [CmdletBinding()]
 param(

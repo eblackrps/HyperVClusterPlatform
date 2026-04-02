@@ -1,6 +1,6 @@
 @{
     RootModule        = 'HyperVClusterPlatform.psm1'
-    ModuleVersion     = '21.0.0'
+    ModuleVersion     = '21.0.1'
     GUID              = 'b5c96ad8-5ffb-4f70-9e3c-3e0ff1f31d1f'
     Author            = 'E. Black'
     CompanyName       = ''
@@ -57,13 +57,11 @@
             LicenseUri   = 'https://github.com/eblackrps/HyperVClusterPlatform/blob/main/LICENSE'
             ProjectUri   = 'https://github.com/eblackrps/HyperVClusterPlatform'
             ReleaseNotes = @'
-v21.0.0 — Production hardening release:
-  - Pinned cluster and Hyper-V command resolution to Windows modules to avoid VMware cmdlet collisions
-  - Restored end-to-end secret-backed config loading with *SecretName support and redacted logging
-  - Fixed HTML report detail encoding to eliminate duplicate output and raw markup injection
-  - Added Cloud witness support to the DSC resource and corrected certification witness handling
-  - Exported health, alert policy, and certification commands as supported operational entry points
-  - Added production-focused PSScriptAnalyzer settings, CI validation updates, and repository cleanup
+v21.0.1 — Release alignment patch:
+  - Activated GitHub Actions CI from `.github/workflows/ci.yml`
+  - Corrected hosted-runner Pester configuration and artifact publishing behavior
+  - Refreshed workflow actions to current supported major versions
+  - Aligned README, roadmap, and module metadata with the released patch version
 '@
         }
     }

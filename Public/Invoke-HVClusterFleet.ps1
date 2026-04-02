@@ -68,7 +68,7 @@ function Invoke-HVClusterFleet {
     )
 
     Initialize-HVLogging -LogPath $LogPath
-    Write-HVLog -Message "=== HyperVClusterPlatform Fleet v21.0.0 — Mode=$Mode ===" -Level 'INFO'
+    Write-HVLog -Message "=== HyperVClusterPlatform Fleet v21.0.1 — Mode=$Mode ===" -Level 'INFO'
 
     # ── Resolve config file list ───────────────────────────────────────────────
     if ($PSCmdlet.ParameterSetName -eq 'FleetFile') {
