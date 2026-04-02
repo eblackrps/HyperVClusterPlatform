@@ -25,7 +25,7 @@ A PowerShell module for fully automated Hyper-V failover cluster deployment, com
 - **File-based rotating logs** — timestamped, color-coded, persisted to disk
 - **JSON config files** — environment profiles (Dev / Staging / Prod) with secret-name resolution
 - **Full Pester test suite** — 127 mocked unit tests across 16 test files, no live cluster required
-- **CI/CD pipelines** — PSScriptAnalyzer lint + Pester + manifest validation + PSGallery publish
+- **CI/CD workflows** — PSScriptAnalyzer lint + Pester + smoke validation + optional PSGallery publish on release tags
 
 ---
 
@@ -115,8 +115,10 @@ HyperVClusterPlatform/
     LiveMigration.Tests.ps1           # live migration readiness tests
     DisasterRecovery.Tests.ps1        # DR snapshot + readiness tests
     CertificationSuite.Tests.ps1      # certification gate tests
+  .github/
+    workflows/
+      ci.yml                          # lint + test + smoke + optional PSGallery publish on v* tags
   Pipelines/
-    github-actions.yml                # lint + test + smoke + PSGallery publish
     azure-pipeline.yml                # lint + test + manifest (3 stages)
   Reports/                            # runtime output — gitignored
   Logs/                               # rotating log files — gitignored

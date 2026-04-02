@@ -124,7 +124,7 @@ Enhanced reporting and JSON telemetry:
 PSGallery publish and auto-versioning CI:
 - `Scripts/Update-ModuleVersion.ps1` — bumps `.psd1` version from git tags
 - `Scripts/New-Release.ps1` — creates GitHub release via `gh` CLI with auto-extracted changelog body
-- PSGallery publish job in `Pipelines/github-actions.yml` (triggered on release tag push)
+- PSGallery publish job in `.github/workflows/ci.yml` (triggered on release tag push)
 
 ---
 

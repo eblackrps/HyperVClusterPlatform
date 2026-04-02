@@ -3,17 +3,12 @@ name: HyperVClusterPlatform CI
 on:
   push:
     branches: [ main, develop ]
+    tags: [ 'v*' ]
   pull_request:
     branches: [ main ]
   workflow_dispatch:
-    inputs:
-      mode:
-        description: 'Run mode (Audit or Enforce)'
-        required: false
-        default: 'Audit'
 
 jobs:
-  # ── Job 1: Lint with PSScriptAnalyzer ─────────────────────────────────────
   lint:
     name: PSScriptAnalyzer Lint
     runs-on: windows-latest
@@ -44,11 +39,8 @@ jobs:
             Write-Error "PSScriptAnalyzer found $($results.Count) issue(s)."
             exit 1
           }
-          else {
-            Write-Host "PSScriptAnalyzer: no issues found." -ForegroundColor Green
-          }
+          Write-Host 'PSScriptAnalyzer: no issues found.' -ForegroundColor Green
 
-  # ── Job 2: Pester unit tests ───────────────────────────────────────────────
   test:
     name: Pester Unit Tests
     runs-on: windows-latest
@@ -64,14 +56,14 @@ jobs:
         shell: pwsh
         run: |
           $config = New-PesterConfiguration
-          $config.Run.Path          = '.\Tests'
-          $config.Output.Verbosity  = 'Detailed'
-          $config.TestResult.Enabled        = $true
-          $config.TestResult.OutputPath     = 'TestResults.xml'
-          $config.TestResult.OutputFormat   = 'NUnitXml'
-          $config.CodeCoverage.Enabled      = $true
-          $config.CodeCoverage.Path         = @('.\Public','.\Private')
-          $config.CodeCoverage.OutputPath   = 'coverage.xml'
+          $config.Run.Path = '.\Tests'
+          $config.Output.Verbosity = 'Detailed'
+          $config.TestResult.Enabled = $true
+          $config.TestResult.OutputPath = 'TestResults.xml'
+          $config.TestResult.OutputFormat = 'NUnitXml'
+          $config.CodeCoverage.Enabled = $true
+          $config.CodeCoverage.Path = @('.\Public', '.\Private')
+          $config.CodeCoverage.OutputPath = 'coverage.xml'
           $result = Invoke-Pester -Configuration $config -PassThru
           if ($result.FailedCount -gt 0) {
             Write-Error "Pester: $($result.FailedCount) test(s) FAILED."
@@ -87,7 +79,6 @@ jobs:
             TestResults.xml
             coverage.xml
 
-  # ── Job 3: Module import smoke test ───────────────────────────────────────
   smoke:
     name: Module Import Smoke Test
     runs-on: windows-latest
@@ -121,3 +112,23 @@ jobs:
         run: |
           $result = Test-ModuleManifest -Path .\HyperVClusterPlatform.psd1
           Write-Host "Manifest valid: $($result.Name) v$($result.Version)"
+
+  publish:
+    name: Publish to PowerShell Gallery
+    runs-on: windows-latest
+    needs: smoke
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Publish module
+        shell: pwsh
+        env:
+          PSGALLERY_API_KEY: ${{ secrets.PSGALLERY_API_KEY }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:PSGALLERY_API_KEY)) {
+            Write-Warning 'PSGALLERY_API_KEY is not configured; skipping PowerShell Gallery publish.'
+            exit 0
+          }
+
+          Publish-Module -Path . -NuGetApiKey $env:PSGALLERY_API_KEY -Repository PSGallery

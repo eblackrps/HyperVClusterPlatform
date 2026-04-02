@@ -64,7 +64,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 - **`Scripts/Update-ModuleVersion.ps1`**: Reads the latest git tag, increments the patch component, and writes the new `ModuleVersion` to `HyperVClusterPlatform.psd1`. Supports `-Major`, `-Minor`, `-Patch` switches and an explicit `-Version` override.
 - **`Scripts/New-Release.ps1`**: Creates a GitHub release via the `gh` CLI. Auto-extracts the changelog entry for the current version from `CHANGELOG.md` as the release body. Creates the git tag if it does not already exist.
-- **PSGallery publish job** added to `Pipelines/github-actions.yml`: triggers on release tag push, calls `Publish-Module` with a PSGallery API key stored as a GitHub secret.
+- **PSGallery publish job** added to `.github/workflows/ci.yml`: triggers on release tag push, calls `Publish-Module` with a PSGallery API key stored as a GitHub secret.
 
 ### Changed
 - **Module manifest**: Version bumped to `17.0.0`.
@@ -182,7 +182,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **`Import-HVClusterConfig`** (`Configuration.ps1`): JSON config file loader with environment overrides and mandatory field validation.
 - **`Config/cluster-config.example.json`**: Config file template.
 - **Pester test suite** (5 files, fully mocked): `Cluster.Tests.ps1`, `DriftEngine.Tests.ps1`, `Preflight.Tests.ps1`, `Rollback.Tests.ps1`, `Configuration.Tests.ps1`.
-- **CI/CD pipelines**: `Pipelines/github-actions.yml` and `Pipelines/azure-pipeline.yml`.
+- **CI/CD pipelines**: `.github/workflows/ci.yml` and `Pipelines/azure-pipeline.yml`.
 
 ### Changed
 - **Module manifest** (`HyperVClusterPlatform.psd1`): Version bumped to `8.0.0`.
