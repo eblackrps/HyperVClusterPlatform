@@ -8,6 +8,9 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   lint:
     name: PSScriptAnalyzer Lint
@@ -57,6 +60,7 @@ jobs:
         run: |
           $config = New-PesterConfiguration
           $config.Run.Path = '.\Tests'
+          $config.Run.PassThru = $true
           $config.Output.Verbosity = 'Detailed'
           $config.TestResult.Enabled = $true
           $config.TestResult.OutputPath = 'TestResults.xml'
@@ -64,7 +68,7 @@ jobs:
           $config.CodeCoverage.Enabled = $true
           $config.CodeCoverage.Path = @('.\Public', '.\Private')
           $config.CodeCoverage.OutputPath = 'coverage.xml'
-          $result = Invoke-Pester -Configuration $config -PassThru
+          $result = Invoke-Pester -Configuration $config
           if ($result.FailedCount -gt 0) {
             Write-Error "Pester: $($result.FailedCount) test(s) FAILED."
             exit 1
@@ -74,6 +78,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
+          if-no-files-found: ignore
           name: pester-results
           path: |
             TestResults.xml
