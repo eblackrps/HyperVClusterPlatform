@@ -1,4 +1,4 @@
-function Get-HVVMPlacementState {
+﻿function Get-HVVMPlacementState {
     <#
     .SYNOPSIS
         Reads current VM placement state: preferred owners and anti-affinity groups.
@@ -65,7 +65,7 @@ function Set-HVVMPreferredOwner {
     .OUTPUTS
         PSCustomObject[]: result per VM — VMName, Changed, Owners.
     #>
-    [CmdletBinding()]
+    [CmdletBinding(SupportsShouldProcess)]
     param(
         [Parameter(Mandatory)][hashtable]$VMPreferredOwners
     )
@@ -86,11 +86,16 @@ function Set-HVVMPreferredOwner {
                                    -ErrorAction SilentlyContinue
 
             if ($diff) {
-                Write-HVLog -Message "VM '$vmName': setting preferred owners to [$($desired -join ',')]." -Level 'WARN'
-                $nodes = $desired | ForEach-Object { Get-ClusterNode -Name $_ -ErrorAction Stop }
-                Set-ClusterOwnerNode -Group $vmName -Owners $nodes -ErrorAction Stop
-                $results.Add([PSCustomObject]@{ VMName = $vmName; Changed = $true; Owners = $desired })
-                Write-HVLog -Message "VM '$vmName': preferred owners updated." -Level 'INFO'
+                if ($PSCmdlet.ShouldProcess($vmName, 'Set preferred owners')) {
+                    Write-HVLog -Message "VM '$vmName': setting preferred owners to [$($desired -join ',')]." -Level 'WARN'
+                    $nodes = $desired | ForEach-Object { Get-ClusterNode -Name $_ -ErrorAction Stop }
+                    Set-ClusterOwnerNode -Group $vmName -Owners $nodes -ErrorAction Stop
+                    $results.Add([PSCustomObject]@{ VMName = $vmName; Changed = $true; Owners = $desired })
+                    Write-HVLog -Message "VM '$vmName': preferred owners updated." -Level 'INFO'
+                }
+                else {
+                    $results.Add([PSCustomObject]@{ VMName = $vmName; Changed = $false; Owners = $desired })
+                }
             }
             else {
                 Write-HVLog -Message "VM '$vmName': preferred owners already correct." -Level 'INFO'
@@ -118,7 +123,7 @@ function New-HVAntiAffinityGroup {
     .OUTPUTS
         PSCustomObject: GroupName, VMNames, Changed.
     #>
-    [CmdletBinding()]
+    [CmdletBinding(SupportsShouldProcess)]
     param(
         [Parameter(Mandatory)][string]  $GroupName,
         [Parameter(Mandatory)][string[]]$VMNames
@@ -133,10 +138,12 @@ function New-HVAntiAffinityGroup {
                         Where-Object Name -eq 'AntiAffinityClassNames').Value
 
             if ($current -ne $GroupName) {
-                Write-HVLog -Message "VM '$vmName': assigning anti-affinity class '$GroupName'." -Level 'WARN'
-                (Get-ClusterGroup -Name $vmName).AntiAffinityClassNames = $GroupName
-                $changed = $true
-                Write-HVLog -Message "VM '$vmName': anti-affinity class set." -Level 'INFO'
+                if ($PSCmdlet.ShouldProcess($vmName, "Assign anti-affinity class '$GroupName'")) {
+                    Write-HVLog -Message "VM '$vmName': assigning anti-affinity class '$GroupName'." -Level 'WARN'
+                    (Get-ClusterGroup -Name $vmName).AntiAffinityClassNames = $GroupName
+                    $changed = $true
+                    Write-HVLog -Message "VM '$vmName': anti-affinity class set." -Level 'INFO'
+                }
             }
             else {
                 Write-HVLog -Message "VM '$vmName': anti-affinity class '$GroupName' already set." -Level 'INFO'

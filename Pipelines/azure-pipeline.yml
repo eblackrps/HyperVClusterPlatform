@@ -14,12 +14,8 @@ pool:
 
 variables:
   moduleName: 'HyperVClusterPlatform'
-  testResultsPath: '$(Build.ArtifactStagingDirectory)/TestResults.xml'
-  coveragePath: '$(Build.ArtifactStagingDirectory)/coverage.xml'
 
 stages:
-
-# ── Stage 1: Lint ─────────────────────────────────────────────────────────────
 - stage: Lint
   displayName: 'PSScriptAnalyzer Lint'
   jobs:
@@ -30,12 +26,14 @@ stages:
     - task: PowerShell@2
       displayName: 'Install PSScriptAnalyzer'
       inputs:
+        pwsh: true
         targetType: inline
         script: Install-Module PSScriptAnalyzer -Force -Scope CurrentUser -Repository PSGallery
 
     - task: PowerShell@2
       displayName: 'Run PSScriptAnalyzer'
       inputs:
+        pwsh: true
         targetType: inline
         script: |
           $paths = @(
@@ -55,38 +53,54 @@ stages:
             Write-Error "PSScriptAnalyzer found $($results.Count) issue(s)."
             exit 1
           }
-          Write-Host "PSScriptAnalyzer: clean." -ForegroundColor Green
+          Write-Host 'PSScriptAnalyzer: clean.' -ForegroundColor Green
 
-# ── Stage 2: Test ─────────────────────────────────────────────────────────────
 - stage: Test
   displayName: 'Pester Unit Tests'
   dependsOn: Lint
   jobs:
   - job: Pester
+    strategy:
+      matrix:
+        WindowsPowerShell:
+          jobLabel: 'Windows PowerShell 5.1'
+          usePwsh: false
+          artifactSuffix: 'winps'
+        PowerShell7:
+          jobLabel: 'PowerShell 7'
+          usePwsh: true
+          artifactSuffix: 'pwsh'
+    displayName: '$(jobLabel)'
     steps:
     - checkout: self
 
     - task: PowerShell@2
       displayName: 'Install Pester 5'
       inputs:
+        pwsh: $(usePwsh)
         targetType: inline
         script: Install-Module Pester -MinimumVersion 5.0 -Force -Scope CurrentUser -Repository PSGallery
 
     - task: PowerShell@2
       displayName: 'Run Pester tests'
       inputs:
+        pwsh: $(usePwsh)
         targetType: inline
         script: |
+          Import-Module Pester -MinimumVersion 5.0 -ErrorAction Stop
+          $testResultsPath = Join-Path '$(Build.ArtifactStagingDirectory)' 'TestResults-$(artifactSuffix).xml'
+          $coveragePath = Join-Path '$(Build.ArtifactStagingDirectory)' 'coverage-$(artifactSuffix).xml'
           $config = New-PesterConfiguration
           $config.Run.Path                = '.\Tests'
+          $config.Run.PassThru            = $true
           $config.Output.Verbosity        = 'Detailed'
           $config.TestResult.Enabled      = $true
-          $config.TestResult.OutputPath   = '$(testResultsPath)'
+          $config.TestResult.OutputPath   = $testResultsPath
           $config.TestResult.OutputFormat = 'NUnitXml'
           $config.CodeCoverage.Enabled    = $true
           $config.CodeCoverage.Path       = @('.\Public','.\Private')
-          $config.CodeCoverage.OutputPath = '$(coveragePath)'
-          $result = Invoke-Pester -Configuration $config -PassThru
+          $config.CodeCoverage.OutputPath = $coveragePath
+          $result = Invoke-Pester -Configuration $config
           if ($result.FailedCount -gt 0) {
             Write-Error "$($result.FailedCount) test(s) FAILED."
             exit 1
@@ -97,31 +111,41 @@ stages:
       condition: always()
       inputs:
         testResultsFormat: 'NUnit'
-        testResultsFiles: '$(testResultsPath)'
-        testRunTitle: 'HyperVClusterPlatform Pester'
+        testResultsFiles: '$(Build.ArtifactStagingDirectory)\TestResults-$(artifactSuffix).xml'
+        testRunTitle: 'HyperVClusterPlatform $(jobLabel)'
 
     - task: PublishBuildArtifacts@1
       displayName: 'Publish coverage artifact'
       condition: always()
       inputs:
-        pathToPublish: '$(coveragePath)'
-        artifactName: 'CodeCoverage'
+        pathToPublish: '$(Build.ArtifactStagingDirectory)\coverage-$(artifactSuffix).xml'
+        artifactName: 'CodeCoverage-$(artifactSuffix)'
 
-# ── Stage 3: Validate manifest ────────────────────────────────────────────────
 - stage: Validate
-  displayName: 'Module Manifest Validation'
+  displayName: 'Module Import Smoke'
   dependsOn: Test
   jobs:
   - job: ManifestCheck
+    strategy:
+      matrix:
+        WindowsPowerShell:
+          jobLabel: 'Windows PowerShell 5.1'
+          usePwsh: false
+        PowerShell7:
+          jobLabel: 'PowerShell 7'
+          usePwsh: true
+    displayName: '$(jobLabel)'
     steps:
     - checkout: self
 
     - task: PowerShell@2
-      displayName: 'Test-ModuleManifest'
+      displayName: 'Import module and validate manifest'
       inputs:
+        pwsh: $(usePwsh)
         targetType: inline
         script: |
           $m = Test-ModuleManifest -Path .\HyperVClusterPlatform.psd1
+          Write-Host "Engine: $($PSVersionTable.PSEdition) $($PSVersionTable.PSVersion)"
           Write-Host "Module: $($m.Name)  Version: $($m.Version)"
           Import-Module .\HyperVClusterPlatform.psd1 -Force
           $cmds = Get-Command -Module HyperVClusterPlatform

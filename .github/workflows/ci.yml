@@ -8,6 +8,9 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   lint:
     name: PSScriptAnalyzer Lint
@@ -42,29 +45,40 @@ jobs:
           Write-Host 'PSScriptAnalyzer: no issues found.' -ForegroundColor Green
 
   test:
-    name: Pester Unit Tests
+    name: Pester Unit Tests (${{ matrix.label }})
     runs-on: windows-latest
     needs: lint
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: PowerShell 7
+            shell: pwsh
+            artifact_suffix: pwsh
+          - label: Windows PowerShell 5.1
+            shell: powershell
+            artifact_suffix: winps
     steps:
       - uses: actions/checkout@v6
 
       - name: Install Pester 5
-        shell: pwsh
+        shell: ${{ matrix.shell }}
         run: Install-Module Pester -MinimumVersion 5.0 -Force -Scope CurrentUser -Repository PSGallery
 
       - name: Run Pester tests
-        shell: pwsh
+        shell: ${{ matrix.shell }}
         run: |
+          Import-Module Pester -MinimumVersion 5.0 -ErrorAction Stop
           $config = New-PesterConfiguration
           $config.Run.Path = '.\Tests'
           $config.Run.PassThru = $true
           $config.Output.Verbosity = 'Detailed'
           $config.TestResult.Enabled = $true
-          $config.TestResult.OutputPath = 'TestResults.xml'
+          $config.TestResult.OutputPath = 'TestResults-${{ matrix.artifact_suffix }}.xml'
           $config.TestResult.OutputFormat = 'NUnitXml'
           $config.CodeCoverage.Enabled = $true
           $config.CodeCoverage.Path = @('.\Public', '.\Private')
-          $config.CodeCoverage.OutputPath = 'coverage.xml'
+          $config.CodeCoverage.OutputPath = 'coverage-${{ matrix.artifact_suffix }}.xml'
           $result = Invoke-Pester -Configuration $config
           if ($result.FailedCount -gt 0) {
             Write-Error "Pester: $($result.FailedCount) test(s) FAILED."
@@ -76,23 +90,32 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           if-no-files-found: ignore
-          name: pester-results
+          name: pester-results-${{ matrix.artifact_suffix }}
           path: |
-            TestResults.xml
-            coverage.xml
+            TestResults-${{ matrix.artifact_suffix }}.xml
+            coverage-${{ matrix.artifact_suffix }}.xml
 
   smoke:
-    name: Module Import Smoke Test
+    name: Module Import Smoke (${{ matrix.label }})
     runs-on: windows-latest
     needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: PowerShell 7
+            shell: pwsh
+          - label: Windows PowerShell 5.1
+            shell: powershell
     steps:
       - uses: actions/checkout@v6
 
       - name: Verify module loads and exports correctly
-        shell: pwsh
+        shell: ${{ matrix.shell }}
         run: |
           Import-Module .\HyperVClusterPlatform.psd1 -Force
           $cmds = Get-Command -Module HyperVClusterPlatform
+          Write-Host "Engine: $($PSVersionTable.PSEdition) $($PSVersionTable.PSVersion)"
           Write-Host "Exported commands: $($cmds.Name -join ', ')"
           $required = @(
             'Invoke-HVClusterPlatform'
@@ -110,7 +133,7 @@ jobs:
           Write-Host "Module version: $version" -ForegroundColor Green
 
       - name: Validate module manifest
-        shell: pwsh
+        shell: ${{ matrix.shell }}
         run: |
           $result = Test-ModuleManifest -Path .\HyperVClusterPlatform.psd1
           Write-Host "Manifest valid: $($result.Name) v$($result.Version)"
@@ -133,4 +156,18 @@ jobs:
             exit 0
           }
 
-          Publish-Module -Path . -NuGetApiKey $env:PSGALLERY_API_KEY -Repository PSGallery
+          $manifest = Import-PowerShellDataFile -Path .\HyperVClusterPlatform.psd1
+          $expectedTag = "v$($manifest.ModuleVersion)"
+          if ($env:GITHUB_REF_NAME -ne $expectedTag) {
+            throw "Tag '$($env:GITHUB_REF_NAME)' does not match manifest ModuleVersion '$($manifest.ModuleVersion)'."
+          }
+
+          $packageRoot = Join-Path $env:RUNNER_TEMP 'HyperVClusterPlatform'
+          if (Test-Path $packageRoot) {
+            Remove-Item -LiteralPath $packageRoot -Recurse -Force
+          }
+          New-Item -ItemType Directory -Path $packageRoot -Force | Out-Null
+          Get-ChildItem -Force | Where-Object { $_.Name -notin @('.git', '.github') } |
+            Copy-Item -Destination $packageRoot -Recurse -Force
+
+          Publish-Module -Path $packageRoot -NuGetApiKey $env:PSGALLERY_API_KEY -Repository PSGallery

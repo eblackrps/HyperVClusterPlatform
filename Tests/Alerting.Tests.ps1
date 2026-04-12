@@ -6,7 +6,7 @@ BeforeAll {
     . "$PSScriptRoot\..\Private\Alerting.ps1"
     Mock Write-HVLog { }
     Mock Initialize-HVLogging { }
-    Mock Send-MailMessage { }
+    Mock Send-HVMailMessage { }
     Mock Invoke-RestMethod { }
     Mock Write-EventLog { }
     Mock New-EventLog { }
@@ -36,11 +36,11 @@ Describe "Send-HVAlert" {
                               -SmtpServer 'smtp.test.local' -EmailFrom 'hvp@test.local' `
                               -EmailTo @('admin@test.local')
             $r.EmailSent | Should -Be $true
-            Should -Invoke Send-MailMessage -Times 1
+            Should -Invoke Send-HVMailMessage -Times 1
         }
 
-        It "Records error and EmailSent=false when Send-MailMessage throws" {
-            Mock Send-MailMessage { throw 'SMTP unavailable' }
+        It "Records error and EmailSent=false when Send-HVMailMessage throws" {
+            Mock Send-HVMailMessage { throw 'SMTP unavailable' }
             $r = Send-HVAlert -Subject 'Test' -Body 'Body' `
                               -SmtpServer 'smtp.test.local' -EmailFrom 'hvp@test.local' `
                               -EmailTo @('admin@test.local')
@@ -110,6 +110,9 @@ Describe "Invoke-HVHealthAlertPolicy" {
                 }
             }
             $r = Invoke-HVHealthAlertPolicy -AlertThreshold 80
+            $r.AlertRequired | Should -Be $false
+            $r.AlertAttempted | Should -Be $false
+            $r.AlertDelivered | Should -Be $false
             $r.AlertFired | Should -Be $false
         }
     }
@@ -129,7 +132,10 @@ Describe "Invoke-HVHealthAlertPolicy" {
                 [PSCustomObject]@{ EmailSent=$false; TeamsSent=$false; SlackSent=$false; EventLogWritten=$false; Errors=@() }
             }
             $r = Invoke-HVHealthAlertPolicy -AlertThreshold 80
-            $r.AlertFired | Should -Be $true
+            $r.AlertRequired | Should -Be $true
+            $r.AlertAttempted | Should -Be $true
+            $r.AlertDelivered | Should -Be $false
+            $r.AlertFired | Should -Be $false
         }
 
         It "Uses Critical severity when score is below 50" {
@@ -146,9 +152,30 @@ Describe "Invoke-HVHealthAlertPolicy" {
                 [PSCustomObject]@{ EmailSent=$false; TeamsSent=$false; SlackSent=$false; EventLogWritten=$false; Errors=@() }
             }
             $result = Invoke-HVHealthAlertPolicy -AlertThreshold 80
-            # AlertFired=$true confirms Send-HVAlert was invoked (Critical path taken)
-            $result.AlertFired | Should -Be $true
+            $result.AlertAttempted | Should -Be $true
+            $result.AlertFired | Should -Be $false
             Should -Invoke Send-HVAlert -Times 1 -ParameterFilter { $Severity -eq 'Critical' }
+        }
+
+        It "Marks delivery when at least one alert channel succeeds" {
+            Mock Get-HVClusterHealth {
+                [PSCustomObject]@{
+                    ClusterName = 'TestCluster'
+                    Score       = 40
+                    Overall     = 'Critical'
+                    Details     = @('Node down')
+                    Nodes       = @()
+                }
+            }
+            Mock Send-HVAlert {
+                [PSCustomObject]@{ EmailSent=$true; TeamsSent=$false; SlackSent=$false; EventLogWritten=$false; Errors=@() }
+            }
+
+            $result = Invoke-HVHealthAlertPolicy -AlertThreshold 80
+            $result.AlertRequired | Should -Be $true
+            $result.AlertAttempted | Should -Be $true
+            $result.AlertDelivered | Should -Be $true
+            $result.AlertFired | Should -Be $true
         }
     }
 }

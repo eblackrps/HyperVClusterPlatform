@@ -88,6 +88,13 @@ function Get-HVDriftScore {
         }
     }
 
+    if ($Desired.WitnessResource -and $Current.WitnessResource -and
+        ($Desired.WitnessType -in @('Disk','Share')) -and
+        ($Desired.WitnessResource -ne $Current.WitnessResource)) {
+        $score = [math]::Min(100, $score + 20)
+        $detail.Add("Witness resource mismatch: desired='$($Desired.WitnessResource)' current='$($Current.WitnessResource)'")
+    }
+
     if ($score -gt 100) { $score = 100 }
 
     return [PSCustomObject]@{

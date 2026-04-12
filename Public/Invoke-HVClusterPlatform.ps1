@@ -1,251 +1,311 @@
+function ConvertTo-HVPlainTextValue {
+    [CmdletBinding()]
+    param($Value)
+
+    if ($Value -is [System.Security.SecureString]) {
+        return ConvertFrom-HVSecureString -SecureString $Value
+    }
+
+    return [string]$Value
+}
+
 function Invoke-HVClusterPlatform {
     <#
     .SYNOPSIS
         Main entry point for the HyperVClusterPlatform module.
-        Supports Audit, Enforce, and Remediate modes for Hyper-V failover cluster lifecycle.
-        Compatible with Windows Server 2022 and Windows Server 2025.
-
-    .DESCRIPTION
-        Execution flow:
-          1. Load config file (optional) and merge with direct parameters.
-          2. Initialize file-based logging.
-          3. Detect OS version profile (WS2022 / WS2025).
-          4. Run pre-flight checks: admin rights, OS version, features, domain membership.
-          5. Validate per-node readiness: WinRM, features, domain.
-          6. Build desired state object.
-          7. Capture pre-change snapshot (JSON).
-          8. Read current cluster state and compute drift score.
-          9. Generate compliance HTML report.
-         10. Enforce / Remediate: create cluster, add nodes, configure witness.
-         11. Re-assess drift post-enforcement and generate updated report.
-
-    .PARAMETER ClusterName
-        Desired name for the cluster (becomes the CNO in Active Directory).
-
-    .PARAMETER Nodes
-        Array of node hostnames that should be cluster members.
-
-    .PARAMETER ClusterIP
-        Static IP address assigned to the cluster name object.
-
-    .PARAMETER WitnessType
-        Quorum witness type: None | Disk | Cloud | Share.
-
-    .PARAMETER Mode
-        Audit (read-only, default) | Enforce (apply changes) | Remediate (alias for Enforce).
-
-    .PARAMETER ReportsPath
-        Directory for HTML reports and JSON snapshots. Default: <ModuleRoot>\..\Reports
-
-    .PARAMETER LogPath
-        Directory for rotating .log files. Default: <ModuleRoot>\..\Logs
-
-    .PARAMETER ConfigFile
-        Optional path to a JSON config file. File values are defaults; CLI params override them.
-
-    .PARAMETER Environment
-        Environment name for the config file's 'Environments' block (e.g. Prod, Staging).
-
-    .PARAMETER SkipPreFlight
-        Skip local machine pre-flight checks (admin, OS, features, domain).
-
-    .PARAMETER SkipNodeValidation
-        Skip per-node WinRM / feature / domain validation (faster, less safe).
-
-    .PARAMETER CloudWitnessStorageAccount
-        Azure storage account name. Required when WitnessType='Cloud'.
-
-    .PARAMETER CloudWitnessStorageKey
-        Azure storage account access key. Required when WitnessType='Cloud'.
-
-    .PARAMETER FileShareWitnessPath
-        UNC path to a file share. Required when WitnessType='Share'.
-
-    .EXAMPLE
-        Invoke-HVClusterPlatform -ClusterName "ProdCluster" -Nodes @("NODE1","NODE2") `
-            -ClusterIP "10.10.10.10" -WitnessType Disk -Mode Audit
-
-    .EXAMPLE
-        Invoke-HVClusterPlatform -ClusterName "ProdCluster" -Nodes @("NODE1","NODE2","NODE3") `
-            -ClusterIP "10.10.10.10" -WitnessType Cloud -Mode Enforce `
-            -CloudWitnessStorageAccount "mystorageacct" -CloudWitnessStorageKey "base64key=="
-
-    .EXAMPLE
-        Invoke-HVClusterPlatform -ConfigFile .\Config\prod.json -Environment Prod -Mode Enforce
-
-    .OUTPUTS
-        PSCustomObject with: Mode, DriftScore, DriftDetails, ReportPath, SnapshotPath,
-        PreFlightPassed, NodeValidationResults, LogPath, OSProfile.
     #>
-    [CmdletBinding(DefaultParameterSetName = 'Direct')]
+    [CmdletBinding(DefaultParameterSetName = 'Direct', SupportsShouldProcess, ConfirmImpact = 'High')]
     param(
-        [Parameter(ParameterSetName = 'Direct',     Mandatory)][string]$ClusterName,
-        [Parameter(ParameterSetName = 'Direct',     Mandatory)][string[]]$Nodes,
-        [Parameter(ParameterSetName = 'Direct',     Mandatory)][string]$ClusterIP,
-        [Parameter(ParameterSetName = 'Direct',     Mandatory)]
+        [Parameter(ParameterSetName = 'Direct', Mandatory)][string]$ClusterName,
+        [Parameter(ParameterSetName = 'Direct', Mandatory)][string[]]$Nodes,
+        [Parameter(ParameterSetName = 'Direct', Mandatory)][string]$ClusterIP,
+        [Parameter(ParameterSetName = 'Direct', Mandatory)]
         [Parameter(ParameterSetName = 'ConfigFile')]
         [ValidateSet('None','Disk','Cloud','Share')][string]$WitnessType,
 
         [Parameter(ParameterSetName = 'ConfigFile', Mandatory)][string]$ConfigFile,
         [Parameter(ParameterSetName = 'ConfigFile')][string]$Environment = '',
 
-        [ValidateSet('Audit','Enforce','Remediate')][string]$Mode        = 'Audit',
-        [string]$ReportsPath                  = '',
-        [string]$LogPath                      = '',
-        [string]$CloudWitnessStorageAccount   = '',
-        [string]$CloudWitnessStorageKey       = '',
-        [string]$FileShareWitnessPath         = '',
+        [ValidateSet('Audit','Enforce','Remediate')][string]$Mode = 'Audit',
+        [string]$ReportsPath = '',
+        [string]$LogPath = '',
+        [string]$CloudWitnessStorageAccount = '',
+        $CloudWitnessStorageKey = '',
+        [string]$FileShareWitnessPath = '',
+        [string]$WitnessDiskName = '',
         [switch]$SkipPreFlight,
-        [switch]$SkipNodeValidation
+        [switch]$SkipNodeValidation,
+        [switch]$SkipClusterValidation,
+        [switch]$BreakGlass,
+        [switch]$PlanOnly,
+        [switch]$SkipArtifactPersistence,
+        [Nullable[bool]]$EmitTelemetry = $null,
+        [int]$RetainArtifactCount = 0
     )
 
-    # ── 0. Load and merge config file ──────────────────────────────────────────
+    $startedAt = Get-Date
+    $operationId = Get-HVGeneratedOperationId
+    $moduleVersion = Get-HVModuleVersion
+    $modeWasExplicit = $PSBoundParameters.ContainsKey('Mode')
+
     if ($ConfigFile) {
         $cfg = Import-HVClusterConfig -ConfigPath $ConfigFile -Environment $Environment
         if (Get-Command Resolve-HVConfigSecrets -ErrorAction SilentlyContinue) {
-            $cfg = Resolve-HVConfigSecrets -Config $cfg
+            $cfg = Resolve-HVConfigSecrets -Config $cfg -ThrowOnError
         }
-        if (-not $ClusterName)  { $ClusterName  = $cfg.ClusterName  }
-        if (-not $Nodes)        { $Nodes        = $cfg.Nodes        }
-        if (-not $ClusterIP)    { $ClusterIP    = $cfg.ClusterIP    }
-        if (-not $WitnessType)  { $WitnessType  = $cfg.WitnessType  }
-        if ($Mode -eq 'Audit' -and $cfg.Mode)  { $Mode = $cfg.Mode  }
+
+        if (-not $ClusterName) { $ClusterName = $cfg.ClusterName }
+        if (-not $Nodes) { $Nodes = $cfg.Nodes }
+        if (-not $ClusterIP) { $ClusterIP = $cfg.ClusterIP }
+        if (-not $WitnessType) { $WitnessType = $cfg.WitnessType }
+        if (-not $modeWasExplicit -and $cfg.Mode) { $Mode = $cfg.Mode }
         if (-not $ReportsPath -and $cfg.ReportsPath) { $ReportsPath = $cfg.ReportsPath }
-        if (-not $LogPath     -and $cfg.LogPath)     { $LogPath     = $cfg.LogPath     }
+        if (-not $LogPath -and $cfg.LogPath) { $LogPath = $cfg.LogPath }
         if (-not $CloudWitnessStorageAccount -and $cfg.CloudWitnessStorageAccount) { $CloudWitnessStorageAccount = $cfg.CloudWitnessStorageAccount }
-        if (-not $CloudWitnessStorageKey     -and $cfg.CloudWitnessStorageKey)     { $CloudWitnessStorageKey     = $cfg.CloudWitnessStorageKey     }
-        if (-not $FileShareWitnessPath       -and $cfg.FileShareWitnessPath)       { $FileShareWitnessPath       = $cfg.FileShareWitnessPath       }
-        if (-not $SkipPreFlight.IsPresent    -and $cfg.SkipPreFlight)  { $SkipPreFlight     = [switch]$true }
+        if (-not $CloudWitnessStorageKey -and $cfg.CloudWitnessStorageKey) { $CloudWitnessStorageKey = $cfg.CloudWitnessStorageKey }
+        if (-not $FileShareWitnessPath -and $cfg.FileShareWitnessPath) { $FileShareWitnessPath = $cfg.FileShareWitnessPath }
+        if (-not $WitnessDiskName -and $cfg.WitnessDiskName) { $WitnessDiskName = $cfg.WitnessDiskName }
+        if (-not $SkipPreFlight.IsPresent -and $cfg.SkipPreFlight) { $SkipPreFlight = [switch]$true }
         if (-not $SkipNodeValidation.IsPresent -and $cfg.SkipNodeValidation) { $SkipNodeValidation = [switch]$true }
+        if (-not $SkipClusterValidation.IsPresent -and $cfg.SkipClusterValidation) { $SkipClusterValidation = [switch]$true }
+        if (-not $BreakGlass.IsPresent -and $cfg.BreakGlass) { $BreakGlass = [switch]$true }
+        if (-not $PlanOnly.IsPresent -and $cfg.PlanOnly) { $PlanOnly = [switch]$true }
+        if (-not $SkipArtifactPersistence.IsPresent -and $cfg.SkipArtifactPersistence) { $SkipArtifactPersistence = [switch]$true }
+        if ($RetainArtifactCount -le 0 -and $cfg.RetainArtifactCount) { $RetainArtifactCount = [int]$cfg.RetainArtifactCount }
+        if (-not $EmitTelemetry.HasValue -and $cfg.PSObject.Properties.Name -contains 'EmitTelemetry') {
+            $EmitTelemetry = [bool]$cfg.EmitTelemetry
+        }
     }
 
     if (-not $ReportsPath) { $ReportsPath = Join-Path $PSScriptRoot '..\Reports' }
-    if (-not $LogPath)     { $LogPath     = Join-Path $PSScriptRoot '..\Logs'    }
+    if (-not $LogPath) { $LogPath = Join-Path $PSScriptRoot '..\Logs' }
+    if ($RetainArtifactCount -le 0) { $RetainArtifactCount = 30 }
+    if (-not $EmitTelemetry.HasValue) { $EmitTelemetry = $true }
 
-    # ── 1. Initialize logging ──────────────────────────────────────────────────
-    Initialize-HVLogging -LogPath $LogPath
+    if ($SkipArtifactPersistence -and $Mode -in @('Enforce','Remediate')) {
+        throw 'SkipArtifactPersistence is only supported for Audit mode because rollback requires a snapshot.'
+    }
 
-    Write-HVLog -Message "=== HyperVClusterPlatform v21.0.1 ===" -Level 'INFO'
-    Write-HVLog -Message "Mode=$Mode  Cluster=$ClusterName  Witness=$WitnessType  Nodes=[$($Nodes -join ',')]" -Level 'INFO'
+    Initialize-HVLogging -LogPath $LogPath -OperationId $operationId
 
     $result = [ordered]@{
-        ClusterName           = $ClusterName
-        Mode                  = $Mode
-        DriftScore            = 100
-        DriftDetails          = @()
-        ReportPath            = $null
-        SnapshotPath          = $null
-        PreFlightPassed       = $true
-        NodeValidationResults = @()
-        LogPath               = $null
-        OSProfile             = $null
+        ClusterName             = $ClusterName
+        Mode                    = $Mode
+        Status                  = 'Started'
+        OperationId             = $operationId
+        StartedAt               = $startedAt.ToString('o')
+        CompletedAt             = $null
+        DriftScore              = 100
+        DriftDetails            = @()
+        ReportPath              = $null
+        SnapshotPath            = $null
+        JournalPath             = $null
+        TelemetryPath           = $null
+        PreFlightPassed         = $true
+        ClusterValidationPassed = $null
+        ClusterValidationStatus = 'NotRun'
+        ClusterValidationReport = $null
+        NodeValidationResults   = @()
+        LogPath                 = $null
+        StructuredLogPath       = $null
+        OSProfile               = $null
+        Plan                    = $null
+        RollbackStatus          = 'NotNeeded'
+        RollbackActions         = @()
+        RollbackErrors          = @()
     }
 
-    # ── 2. OS detection ────────────────────────────────────────────────────────
-    $osProfile        = Get-HVOSProfile
-    $result.OSProfile = $osProfile
+    try {
+        Write-HVLog -Message "=== HyperVClusterPlatform v$moduleVersion ===" -Level 'INFO'
+        Write-HVLog -Message "Mode=$Mode Cluster=$ClusterName Witness=$WitnessType Nodes=[$($Nodes -join ',')]" -Level 'INFO'
 
-    # ── 3. Pre-flight checks ───────────────────────────────────────────────────
-    if (-not $SkipPreFlight) {
-        $pf = Test-HVPrerequisites -RequiredNodes $Nodes
-        $result.PreFlightPassed = $pf.Passed
-        if (-not $pf.Passed) {
-            Write-HVLog -Message "Pre-flight FAILED. Aborting run." -Level 'ERROR'
-            $result.DriftDetails = $pf.Failures
-            $result.LogPath      = Get-HVLogPath
-            return [PSCustomObject]$result
+        do {
+            if ($Mode -in @('Enforce','Remediate')) {
+                $unsafeSkips = @('SkipPreFlight','SkipNodeValidation','SkipClusterValidation') |
+                    Where-Object { (Get-Variable -Name $_ -ValueOnly) }
+                if ($unsafeSkips.Count -gt 0 -and -not $BreakGlass) {
+                    throw "Unsafe skip flags [$($unsafeSkips -join ', ')] require -BreakGlass for Enforce/Remediate runs."
+                }
+            }
+
+            $osProfile = Get-HVOSProfile
+            $result.OSProfile = $osProfile
+
+            if (-not $SkipPreFlight) {
+                $pf = Test-HVPrerequisites -RequiredNodes $Nodes -Mode $Mode `
+                    -SkipClusterValidation:$SkipClusterValidation `
+                    -BreakGlass:$BreakGlass `
+                    -TargetClusterName $ClusterName
+                $result.PreFlightPassed = $pf.Passed
+                if ($pf.ClusterValidation) {
+                    $result.ClusterValidationPassed = $pf.ClusterValidation.Passed
+                    $result.ClusterValidationStatus = if ($pf.ClusterValidation.Passed) { 'Passed' } else { 'Failed' }
+                    $result.ClusterValidationReport = $pf.ClusterValidation.ReportPath
+                }
+                elseif ($SkipClusterValidation) {
+                    $result.ClusterValidationStatus = 'Skipped'
+                }
+                if (-not $pf.Passed) {
+                    $result.Status = 'FailedPreFlight'
+                    $result.DriftDetails = $pf.Failures
+                    break
+                }
+            }
+            else {
+                Write-HVLog -Message 'Pre-flight checks skipped (-SkipPreFlight).' -Level 'WARN'
+                $result.ClusterValidationPassed = $null
+                $result.ClusterValidationStatus = 'Skipped'
+            }
+
+            if (-not $SkipNodeValidation) {
+                $nodeResults = Test-HVNodeReadiness -Nodes $Nodes
+                $result.NodeValidationResults = $nodeResults
+                $failedNodes = @($nodeResults | Where-Object { -not $_.Passed })
+                if ($failedNodes.Count -gt 0) {
+                    $failedNames = ($failedNodes | Select-Object -ExpandProperty NodeName) -join ', '
+                    Write-HVLog -Message "Node validation FAILED for: $failedNames. Aborting." -Level 'ERROR'
+                    $result.Status = 'FailedNodeValidation'
+                    $result.DriftDetails = @("Node validation failed for: $failedNames")
+                    break
+                }
+            }
+            else {
+                Write-HVLog -Message 'Node validation skipped (-SkipNodeValidation).' -Level 'WARN'
+            }
+
+            if ($WitnessType -eq 'Cloud' -and -not [string]::IsNullOrWhiteSpace($CloudWitnessStorageKey)) {
+                $CloudWitnessStorageKey = if ($CloudWitnessStorageKey -is [System.Security.SecureString]) {
+                    $CloudWitnessStorageKey
+                }
+                else {
+                    ConvertTo-HVSecureString -PlainText ([string]$CloudWitnessStorageKey)
+                }
+            }
+
+            if ($WitnessType -eq 'Cloud' -and (-not $CloudWitnessStorageAccount -or -not $CloudWitnessStorageKey)) {
+                throw "WitnessType='Cloud' requires CloudWitnessStorageAccount plus CloudWitnessStorageKey or CloudWitnessStorageKeySecretName."
+            }
+            if ($WitnessType -eq 'Disk' -and [string]::IsNullOrWhiteSpace($WitnessDiskName)) {
+                throw "WitnessType='Disk' requires WitnessDiskName for safe quorum targeting."
+            }
+            if ($WitnessType -eq 'Share' -and [string]::IsNullOrWhiteSpace($FileShareWitnessPath)) {
+                throw "WitnessType='Share' requires FileShareWitnessPath."
+            }
+
+            $desired = Get-HVDesiredState -ClusterName $ClusterName -Nodes $Nodes -WitnessType $WitnessType `
+                -WitnessDiskName $WitnessDiskName -FileShareWitnessPath $FileShareWitnessPath
+
+            $current = Get-HVClusterCurrentState
+            $driftResult = if ($current) {
+                Get-HVDriftScore -Desired $desired -Current $current
+            }
+            else {
+                [PSCustomObject]@{ Score = 100; Details = @('No cluster found on this node.') }
+            }
+
+            $result.DriftScore = $driftResult.Score
+            $result.DriftDetails = $driftResult.Details
+            $result.Plan = Get-HVEnforcementPlan -Desired $desired -ClusterIP $ClusterIP `
+                -CloudWitnessStorageAccount $CloudWitnessStorageAccount `
+                -FileShareWitnessPath $FileShareWitnessPath `
+                -WitnessDiskName $WitnessDiskName
+
+            if (-not $SkipArtifactPersistence) {
+                $result.SnapshotPath = Export-HVClusterSnapshot -ReportsPath $ReportsPath -Label 'Pre-Enforce' -ClusterName $ClusterName -MaxArtifactsToKeep $RetainArtifactCount
+                $result.ReportPath = Export-HVComplianceReport -DriftResult $driftResult -ReportsPath $ReportsPath `
+                    -ClusterName $ClusterName -Mode $Mode -OSProfile $osProfile -MaxArtifactsToKeep $RetainArtifactCount
+            }
+
+            if ($Mode -eq 'Audit') {
+                $result.Status = if ($driftResult.Score -eq 0) { 'Compliant' } else { 'NonCompliant' }
+                if ($PlanOnly) { $result.Status = 'Planned' }
+                break
+            }
+
+            if ($result.Plan.Blocked) {
+                $result.Status = 'Blocked'
+                $result.DriftDetails = @($result.DriftDetails + $result.Plan.BlockedReason | Where-Object { $_ })
+                break
+            }
+
+            if (-not $result.Plan.RequiresChange) {
+                Write-HVLog -Message 'Cluster is fully compliant. Enforcement not needed.' -Level 'INFO'
+                $result.Status = 'Compliant'
+                break
+            }
+
+            if ($PlanOnly) {
+                Write-HVLog -Message 'PlanOnly requested. Returning change plan without making changes.' -Level 'INFO'
+                $result.Status = 'Planned'
+                break
+            }
+
+            if (-not $PSCmdlet.ShouldProcess($ClusterName, 'Apply planned Hyper-V cluster changes')) {
+                $result.Status = 'Previewed'
+                break
+            }
+
+            $enforcement = Invoke-HVEnforcement -Desired $desired -ClusterIP $ClusterIP -SnapshotPath $result.SnapshotPath `
+                -CloudWitnessStorageAccount $CloudWitnessStorageAccount `
+                -CloudWitnessStorageKey (ConvertTo-HVPlainTextValue -Value $CloudWitnessStorageKey) `
+                -FileShareWitnessPath $FileShareWitnessPath `
+                -WitnessDiskName $WitnessDiskName
+
+            $result.JournalPath = $enforcement.JournalPath
+
+            $current2 = Get-HVClusterCurrentState
+            $driftResult2 = if ($current2) {
+                Get-HVDriftScore -Desired $desired -Current $current2
+            }
+            else {
+                [PSCustomObject]@{ Score = 100; Details = @('Cluster not found after enforcement.') }
+            }
+
+            if (-not $SkipArtifactPersistence) {
+                $result.ReportPath = Export-HVComplianceReport -DriftResult $driftResult2 -ReportsPath $ReportsPath `
+                    -ClusterName $ClusterName -Mode "$Mode (Post-Enforce)" -OSProfile $osProfile -MaxArtifactsToKeep $RetainArtifactCount
+            }
+
+            $result.DriftScore = $driftResult2.Score
+            $result.DriftDetails = $driftResult2.Details
+            $result.Status = if ($driftResult2.Score -eq 0) { 'Succeeded' } else { 'DriftRemaining' }
+            Write-HVLog -Message "Post-enforcement drift: $($driftResult2.Score)/100" -Level 'INFO'
+        } while ($false)
+    }
+    catch {
+        Write-HVLog -Message "Platform run FAILED: $($_.Exception.Message)" -Level 'ERROR'
+        $result.Status = 'Failed'
+        $result.DriftDetails = @($result.DriftDetails + $_.Exception.Message | Where-Object { $_ })
+
+        if ($_.Exception.Data.Contains('JournalPath')) {
+            $result.JournalPath = [string]$_.Exception.Data['JournalPath']
+        }
+        if ($_.Exception.Data.Contains('RollbackStatus')) {
+            $result.RollbackStatus = [string]$_.Exception.Data['RollbackStatus']
+        }
+        if ($_.Exception.Data.Contains('RollbackActions')) {
+            $result.RollbackActions = @($_.Exception.Data['RollbackActions'])
+        }
+        if ($_.Exception.Data.Contains('RollbackErrors')) {
+            $result.RollbackErrors = @($_.Exception.Data['RollbackErrors'])
         }
     }
-    else {
-        Write-HVLog -Message "Pre-flight checks skipped (-SkipPreFlight)." -Level 'WARN'
-    }
+    finally {
+        $result.CompletedAt = (Get-Date).ToString('o')
+        $result.LogPath = Get-HVLogPath
+        $result.StructuredLogPath = Get-HVStructuredLogPath
 
-    # ── 4. Node validation ─────────────────────────────────────────────────────
-    if (-not $SkipNodeValidation) {
-        $nodeResults                  = Test-HVNodeReadiness -Nodes $Nodes
-        $result.NodeValidationResults = $nodeResults
-        $failedNodes = @($nodeResults | Where-Object { -not $_.Passed })
-        if ($failedNodes.Count -gt 0) {
-            $failedNames = ($failedNodes | Select-Object -ExpandProperty NodeName) -join ', '
-            Write-HVLog -Message "Node validation FAILED for: $failedNames. Aborting." -Level 'ERROR'
-            $result.DriftDetails = @("Node validation failed for: $failedNames")
-            $result.LogPath      = Get-HVLogPath
-            return [PSCustomObject]$result
+        if ($EmitTelemetry -and -not $SkipArtifactPersistence) {
+            try {
+                $result.TelemetryPath = Export-HVTelemetry -RunResult ([PSCustomObject]$result) -OutputPath $ReportsPath -MaxArtifactsToKeep $RetainArtifactCount
+            }
+            catch {
+                Write-HVLog -Message "Telemetry export failed: $($_.Exception.Message)" -Level 'WARN'
+            }
         }
+
+        Write-HVLog -Message "=== Run complete. Status=$($result.Status) ===" -Level 'INFO'
     }
-    else {
-        Write-HVLog -Message "Node validation skipped (-SkipNodeValidation)." -Level 'WARN'
-    }
-
-    # ── 5. Build desired state ─────────────────────────────────────────────────
-    $desired = New-HVDesiredState -ClusterName $ClusterName -Nodes $Nodes -WitnessType $WitnessType
-
-    # ── 6. Pre-change snapshot ─────────────────────────────────────────────────
-    $snapshotPath        = New-HVClusterSnapshot -ReportsPath $ReportsPath -Label 'Pre-Enforce'
-    $result.SnapshotPath = $snapshotPath
-
-    # ── 7. Drift assessment ────────────────────────────────────────────────────
-    $current     = Get-HVClusterCurrentState
-    $driftResult = if ($current) {
-        Get-HVDriftScore -Desired $desired -Current $current
-    }
-    else {
-        [PSCustomObject]@{ Score = 100; Details = @('No cluster found on this node.') }
-    }
-
-    $result.DriftScore   = $driftResult.Score
-    $result.DriftDetails = $driftResult.Details
-
-    Write-HVLog -Message "Drift score: $($driftResult.Score)/100" -Level 'INFO'
-
-    # ── 8. Compliance report ───────────────────────────────────────────────────
-    $reportPath      = New-HVComplianceReport -DriftResult $driftResult -ReportsPath $ReportsPath `
-                           -ClusterName $ClusterName -Mode $Mode -OSProfile $osProfile
-    $result.ReportPath = $reportPath
-    $result.LogPath    = Get-HVLogPath
-
-    # ── 9. Audit-only path ─────────────────────────────────────────────────────
-    if ($Mode -eq 'Audit') {
-        Write-HVLog -Message "Audit complete. No changes made." -Level 'INFO'
-        return [PSCustomObject]$result
-    }
-
-    # ── 10. Already compliant? ─────────────────────────────────────────────────
-    if ($driftResult.Score -eq 0) {
-        Write-HVLog -Message "Cluster is fully compliant. Enforcement not needed." -Level 'INFO'
-        return [PSCustomObject]$result
-    }
-
-    # ── 11. Enforce / Remediate ────────────────────────────────────────────────
-    $enfParams = @{
-        Desired      = $desired
-        ClusterIP    = $ClusterIP
-        SnapshotPath = $snapshotPath
-    }
-    if ($CloudWitnessStorageAccount) { $enfParams['CloudWitnessStorageAccount'] = $CloudWitnessStorageAccount }
-    if ($CloudWitnessStorageKey)     { $enfParams['CloudWitnessStorageKey']     = $CloudWitnessStorageKey     }
-    if ($FileShareWitnessPath)       { $enfParams['FileShareWitnessPath']       = $FileShareWitnessPath       }
-
-    Invoke-HVEnforcement @enfParams | Out-Null
-
-    # ── 12. Post-enforcement drift re-assessment ───────────────────────────────
-    $current2     = Get-HVClusterCurrentState
-    $driftResult2 = if ($current2) {
-        Get-HVDriftScore -Desired $desired -Current $current2
-    }
-    else {
-        [PSCustomObject]@{ Score = 100; Details = @('Cluster not found after enforcement.') }
-    }
-
-    $reportPath2          = New-HVComplianceReport -DriftResult $driftResult2 -ReportsPath $ReportsPath `
-                                -ClusterName $ClusterName -Mode "$Mode (Post-Enforce)" -OSProfile $osProfile
-    $result.DriftScore    = $driftResult2.Score
-    $result.DriftDetails  = $driftResult2.Details
-    $result.ReportPath    = $reportPath2
-    $result.LogPath       = Get-HVLogPath
-
-    Write-HVLog -Message "Post-enforcement drift: $($driftResult2.Score)/100" -Level 'INFO'
-    Write-HVLog -Message "=== Run complete ===" -Level 'INFO'
 
     return [PSCustomObject]$result
 }

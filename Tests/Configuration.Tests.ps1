@@ -18,6 +18,7 @@ BeforeAll {
             Nodes        = @('NODE1','NODE2')
             ClusterIP    = '10.0.0.10'
             WitnessType  = 'Disk'
+            WitnessDiskName = 'Cluster Disk 1'
             Mode         = 'Audit'
         }
         foreach ($k in $Overrides.Keys) { $base[$k] = $Overrides[$k] }
@@ -85,13 +86,19 @@ Describe "Import-HVClusterConfig" {
         }
 
         It "Throws when Cloud witness lacks storage account" {
-            $cfg = New-TestConfig -Overrides @{ WitnessType = 'Cloud' }
+            $cfg = New-TestConfig -Overrides @{ WitnessType = 'Cloud'; WitnessDiskName = $null }
             { Import-HVClusterConfig -ConfigPath $cfg } | Should -Throw
             Remove-Item $cfg -Force
         }
 
         It "Throws when Share witness lacks file share path" {
-            $cfg = New-TestConfig -Overrides @{ WitnessType = 'Share' }
+            $cfg = New-TestConfig -Overrides @{ WitnessType = 'Share'; WitnessDiskName = $null }
+            { Import-HVClusterConfig -ConfigPath $cfg } | Should -Throw
+            Remove-Item $cfg -Force
+        }
+
+        It "Throws when Disk witness lacks WitnessDiskName" {
+            $cfg = New-TestConfig -Overrides @{ WitnessDiskName = '' }
             { Import-HVClusterConfig -ConfigPath $cfg } | Should -Throw
             Remove-Item $cfg -Force
         }
@@ -105,6 +112,7 @@ Describe "Import-HVClusterConfig" {
                 Nodes        = @('NODE1','NODE2')
                 ClusterIP    = '10.0.0.10'
                 WitnessType  = 'Disk'
+                WitnessDiskName = 'Cluster Disk 1'
                 Mode         = 'Audit'
                 Environments = @{
                     Prod = @{ Mode = 'Enforce' }
@@ -127,6 +135,7 @@ Describe "Import-HVClusterConfig" {
         It "Preserves SecretName fields for later vault resolution" {
             $cfg = New-TestConfig -Overrides @{
                 WitnessType                  = 'Cloud'
+                WitnessDiskName              = $null
                 CloudWitnessStorageAccount   = 'acct01'
                 CloudWitnessStorageKeySecretName = 'CloudKey'
             }

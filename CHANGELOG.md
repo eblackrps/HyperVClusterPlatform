@@ -5,6 +5,28 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [21.1.0] — 2026-04-12
+
+### Added
+- **Rollback visibility**: `Invoke-HVClusterPlatform` now returns `RollbackStatus`, `RollbackActions`, and `RollbackErrors` when enforcement fails after mutation begins.
+- **Artifact identity hardening**: reports, snapshots, journals, telemetry, fleet reports, DR snapshots, and certification reports now use operation-scoped unique filenames.
+- **Release package asset**: `Scripts/New-Release.ps1` now builds a versioned release ZIP asset for GitHub releases.
+
+### Fixed
+- **CLI precedence**: an explicit `-Mode Audit` no longer yields to `Mode='Enforce'` inside a config file.
+- **Cluster validation semantics**: skipped validation now reports as skipped instead of failed.
+- **Fleet status semantics**: audit fleet runs now return `Compliant` or `NonCompliant` instead of overloading enforcement-style success states.
+- **Fleet temp config hygiene**: inline fleet config objects are staged in an operation-specific workspace instead of anonymous global temp files.
+- **Release automation**: GitHub release creation now checks the `gh` exit code before reporting success.
+- **Alerting semantics**: `Invoke-HVHealthAlertPolicy` now distinguishes alert requirement, attempt, and actual delivery.
+- **Secret logging**: vault and config-secret logs no longer emit raw secret reference names.
+
+### Changed
+- **Module manifest**: Version bumped to `21.1.0`.
+- **Documentation**: README, roadmap, and release metadata now document the current result contract and release packaging flow without hard-coded test-count drift.
+
+---
+
 ## [21.0.1] — 2026-04-02
 
 ### Fixed

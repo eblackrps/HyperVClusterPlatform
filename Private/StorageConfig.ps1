@@ -57,7 +57,7 @@ function Add-HVClusterSharedVolume {
     .OUTPUTS
         PSCustomObject: Name, Added, AlreadyCSV, FriendlyName.
     #>
-    [CmdletBinding()]
+    [CmdletBinding(SupportsShouldProcess)]
     param(
         [string]$DiskName,
         [string]$FriendlyName
@@ -87,16 +87,23 @@ function Add-HVClusterSharedVolume {
             throw "No suitable disk found to add as CSV."
         }
 
-        Write-HVLog -Message "Adding '$($disk.Name)' as Cluster Shared Volume..." -Level 'WARN'
-        $csv = Add-ClusterSharedVolume -Name $disk.Name -ErrorAction Stop
-        Write-HVLog -Message "CSV added: '$($csv.Name)'." -Level 'INFO'
+        $csvName = $disk.Name
+        $added = $false
+        if ($PSCmdlet.ShouldProcess($disk.Name, 'Add Cluster Shared Volume')) {
+            Write-HVLog -Message "Adding '$($disk.Name)' as Cluster Shared Volume..." -Level 'WARN'
+            $csv = Add-ClusterSharedVolume -Name $disk.Name -ErrorAction Stop
+            Write-HVLog -Message "CSV added: '$($csv.Name)'." -Level 'INFO'
+            $added = $true
+            $csvName = $csv.Name
 
-        if ($FriendlyName) {
-            $csv.Name = $FriendlyName
-            Write-HVLog -Message "CSV renamed to '$FriendlyName'." -Level 'INFO'
+            if ($FriendlyName) {
+                $csv.Name = $FriendlyName
+                Write-HVLog -Message "CSV renamed to '$FriendlyName'." -Level 'INFO'
+                $csvName = $FriendlyName
+            }
         }
 
-        return [PSCustomObject]@{ Name = $csv.Name; Added = $true; AlreadyCSV = $false; FriendlyName = $FriendlyName }
+        return [PSCustomObject]@{ Name = $csvName; Added = $added; AlreadyCSV = $false; FriendlyName = $FriendlyName }
     }
     catch {
         Write-HVLog -Message "Add-HVClusterSharedVolume failed: $($_.Exception.Message)" -Level 'ERROR'
@@ -148,7 +155,7 @@ function Get-HVStorageDrift {
     }
 
     if ($score -eq 0 -and $detail.Count -eq 0) {
-        $detail.Add("Storage: $count CSV(s), ${totalGB}GB total — compliant.")
+        $detail.Add("Storage: $count CSV(s), ${totalGB}GB total - compliant.")
     }
 
     if ($score -gt 100) { $score = 100 }

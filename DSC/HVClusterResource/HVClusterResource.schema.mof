@@ -8,6 +8,7 @@ class HVClusterResource : OMI_BaseResource
            Description("Quorum witness type. Default: None")]                    string WitnessType;
   [Write, ValueMap{"Present","Absent"}, Values{"Present","Absent"},
            Description("Whether the cluster should exist. Default: Present")]    string Ensure;
+  [Write,    Description("Exact cluster disk witness resource name (WitnessType=Disk)")] string WitnessDiskName;
   [Write,    Description("UNC path to file share witness (WitnessType=Share)")]  string FileShareWitness;
   [Write,    Description("Azure storage account name for cloud witness")]         string CloudWitnessStorageAccount;
   [Write,    Description("Azure storage access key for cloud witness")]           string CloudWitnessStorageKey;

@@ -1,4 +1,4 @@
-function Get-HVClusterHealth {
+﻿function Get-HVClusterHealth {
     <#
     .SYNOPSIS
         Performs a comprehensive health assessment of the running cluster.

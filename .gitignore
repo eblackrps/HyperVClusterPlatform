@@ -11,6 +11,7 @@ Reports/*.json
 # ── PowerShell build artifacts ─────────────────────────────────────────────────
 *.nupkg
 *.zip
+dist/
 
 # ── Test output ────────────────────────────────────────────────────────────────
 TestResults.xml

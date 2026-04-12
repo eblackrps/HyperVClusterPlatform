@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Bumps the ModuleVersion in HyperVClusterPlatform.psd1.
     Can increment Major, Minor, or Patch automatically, or accept an explicit version.
@@ -17,7 +17,7 @@
 
 .EXAMPLE
     .\Scripts\Update-ModuleVersion.ps1 -BumpType Minor
-    .\Scripts\Update-ModuleVersion.ps1 -ExplicitVersion 21.0.1
+    .\Scripts\Update-ModuleVersion.ps1 -ExplicitVersion 21.1.0
 #>
 [CmdletBinding()]
 param(
@@ -30,6 +30,16 @@ param(
 
     [switch]$DryRun
 )
+
+function Write-HVUtf8BomContent {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$Content
+    )
+
+    $encoding = [System.Text.UTF8Encoding]::new($true)
+    [System.IO.File]::WriteAllText((Resolve-Path $Path), $Content, $encoding)
+}
 
 $content = Get-Content -Path $ManifestPath -Raw
 
@@ -51,13 +61,21 @@ else {
     }
 }
 
+if ($newVersion -lt $current) {
+    throw "Refusing to decrease module version from $currentStr to $newVersion."
+}
+
+if ($newVersion -eq $current -and -not $DryRun) {
+    throw "ModuleVersion is already $currentStr. Specify a newer version or use a bump type that advances the manifest."
+}
+
 $newContent = $content -replace "ModuleVersion\s*=\s*'[^']+'", "ModuleVersion     = '$newVersion'"
 
 if ($DryRun) {
     Write-Host "DRY RUN: $currentStr -> $newVersion" -ForegroundColor Cyan
 }
 else {
-    Set-Content -Path $ManifestPath -Value $newContent -Encoding UTF8
+    Write-HVUtf8BomContent -Path $ManifestPath -Content $newContent
     Write-Host "Version bumped: $currentStr -> $newVersion" -ForegroundColor Green
 }
 

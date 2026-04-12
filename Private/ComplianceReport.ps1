@@ -1,4 +1,4 @@
-function New-HVComplianceReport {
+﻿function Export-HVComplianceReport {
     <#
     .SYNOPSIS
         Generates an HTML compliance report with drift score, status, and drift detail lines.
@@ -21,7 +21,8 @@ function New-HVComplianceReport {
         [Parameter(Mandatory)][string]$ReportsPath,
         [string]$ClusterName = '',
         [string]$Mode        = '',
-        $OSProfile           = $null
+        $OSProfile           = $null,
+        [int]$MaxArtifactsToKeep = 30
     )
 
     # Support both legacy int score and new PSCustomObject
@@ -100,8 +101,12 @@ $detailHtml
         New-Item -ItemType Directory -Path $ReportsPath -Force | Out-Null
     }
 
-    $path = Join-Path $ReportsPath ("Compliance-{0}.html" -f (Get-Date -Format 'yyyyMMddHHmmss'))
+    $path = Get-HVArtifactPath -Directory $ReportsPath -Prefix 'Compliance' -Extension 'html' -Identity @(
+        $ClusterName
+        $Mode
+    )
     $html | Out-File -FilePath $path -Encoding UTF8
+    Invoke-HVArtifactRetention -Path $ReportsPath -Filter 'Compliance-*.html' -MaxFiles $MaxArtifactsToKeep
     Write-HVLog -Message "Compliance report: $path (Score=$score, Status=$status)" -Level 'INFO'
     return $path
 }

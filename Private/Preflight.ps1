@@ -1,3 +1,88 @@
+function Test-HVFeatureQueryCapability {
+    <#
+    .SYNOPSIS
+        Returns whether Windows feature discovery is available in the current engine.
+    #>
+    [CmdletBinding()]
+    param()
+
+    $command = Get-Command Get-WindowsFeature -ErrorAction SilentlyContinue
+    if ($command) {
+        return [PSCustomObject]@{
+            Supported = $true
+            Message   = 'Get-WindowsFeature is available.'
+        }
+    }
+
+    $engine = "$($PSVersionTable.PSEdition) $($PSVersionTable.PSVersion)"
+    return [PSCustomObject]@{
+        Supported = $false
+        Message   = "Get-WindowsFeature is unavailable in the current engine ($engine). Use Windows PowerShell 5.1 or install ServerManager compatibility support before running cluster validation."
+    }
+}
+
+function Test-HVClusterValidation {
+    <#
+    .SYNOPSIS
+        Runs Test-Cluster against the requested nodes.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string[]]$Nodes,
+        [string]$ClusterName = ''
+    )
+
+    $failures = [System.Collections.Generic.List[string]]::new()
+    $warnings = [System.Collections.Generic.List[string]]::new()
+    $reportPath = $null
+
+    $testClusterCommand = Get-Command Test-Cluster -ErrorAction SilentlyContinue
+    if (-not $testClusterCommand) {
+        $failures.Add('Test-Cluster is unavailable. Install/import the FailoverClusters module before enforcement runs.')
+        return [PSCustomObject]@{
+            Passed     = $false
+            Failures   = $failures.ToArray()
+            Warnings   = $warnings.ToArray()
+            ReportPath = $reportPath
+        }
+    }
+
+    try {
+        $validation = Test-Cluster -Node $Nodes -ErrorAction Stop
+        if ($validation -is [array]) {
+            $failedItems = @($validation | Where-Object {
+                ($_.PSObject.Properties.Name -contains 'Succeeded' -and -not $_.Succeeded) -or
+                ($_.PSObject.Properties.Name -contains 'Success' -and -not $_.Success)
+            })
+            if ($failedItems.Count -gt 0) {
+                foreach ($item in $failedItems) {
+                    $failures.Add([string]$item)
+                }
+            }
+        }
+        elseif ($validation.PSObject.Properties.Name -contains 'Succeeded' -and -not $validation.Succeeded) {
+            $failures.Add("Test-Cluster reported failure for '$ClusterName'.")
+        }
+
+        if ($validation.PSObject.Properties.Name -contains 'ReportPath') {
+            $reportPath = $validation.ReportPath
+        }
+        elseif ($validation.PSObject.Properties.Name -contains 'Report') {
+            $reportPath = $validation.Report
+        }
+    }
+    catch {
+        $failures.Add("Test-Cluster failed: $($_.Exception.Message)")
+    }
+
+    return [PSCustomObject]@{
+        Passed     = ($failures.Count -eq 0)
+        Failures   = $failures.ToArray()
+        Warnings   = $warnings.ToArray()
+        ReportPath = $reportPath
+    }
+}
+
 function Test-HVPrerequisites {
     <#
     .SYNOPSIS
@@ -16,7 +101,12 @@ function Test-HVPrerequisites {
     param(
         [string[]]$RequiredNodes = @(),
         [ValidateSet('Auto','2022','2025')]
-        [string]$OSVersionOverride = 'Auto'
+        [string]$OSVersionOverride = 'Auto',
+        [ValidateSet('Audit','Enforce','Remediate')]
+        [string]$Mode = 'Audit',
+        [switch]$SkipClusterValidation,
+        [switch]$BreakGlass,
+        [string]$TargetClusterName = ''
     )
 
     $failures = [System.Collections.Generic.List[string]]::new()
@@ -56,6 +146,11 @@ function Test-HVPrerequisites {
     }
 
     # 4. Required Windows Features
+    $featureCapability = Test-HVFeatureQueryCapability
+    if (-not $featureCapability.Supported) {
+        $failures.Add($featureCapability.Message)
+    }
+
     $requiredFeatures = @(
         'Failover-Clustering',
         'Hyper-V',
@@ -64,21 +159,23 @@ function Test-HVPrerequisites {
         'RSAT-Clustering-PowerShell'
     )
 
-    foreach ($feature in $requiredFeatures) {
-        try {
-            $f = Get-WindowsFeature -Name $feature -ErrorAction Stop
-            if ($f.InstallState -eq 'Installed') {
-                Write-HVLog -Message "Pre-flight: Feature '$feature' installed." -Level 'INFO'
+    if ($featureCapability.Supported) {
+        foreach ($feature in $requiredFeatures) {
+            try {
+                $f = Get-WindowsFeature -Name $feature -ErrorAction Stop
+                if ($f.InstallState -eq 'Installed') {
+                    Write-HVLog -Message "Pre-flight: Feature '$feature' installed." -Level 'INFO'
+                }
+                elseif ($f.InstallState -eq 'InstallPending') {
+                    $warnings.Add("Feature '$feature' install is pending (reboot required).")
+                }
+                else {
+                    $failures.Add("Required Windows Feature not installed: '$feature'. Run: Install-WindowsFeature -Name $feature -IncludeManagementTools")
+                }
             }
-            elseif ($f.InstallState -eq 'InstallPending') {
-                $warnings.Add("Feature '$feature' install is pending (reboot required).")
+            catch {
+                $warnings.Add("Could not query feature '$feature': $($_.Exception.Message)")
             }
-            else {
-                $failures.Add("Required Windows Feature not installed: '$feature'. Run: Install-WindowsFeature -Name $feature -IncludeManagementTools")
-            }
-        }
-        catch {
-            $warnings.Add("Could not query feature '$feature': $($_.Exception.Message)")
         }
     }
 
@@ -107,6 +204,32 @@ function Test-HVPrerequisites {
         }
     }
 
+    $clusterValidation = $null
+    if (-not $SkipClusterValidation -and $RequiredNodes.Count -gt 0) {
+        $clusterValidation = Test-HVClusterValidation -Nodes $RequiredNodes -ClusterName $TargetClusterName
+        foreach ($warning in $clusterValidation.Warnings) {
+            $warnings.Add($warning)
+        }
+        if (-not $clusterValidation.Passed) {
+            if ($Mode -in @('Enforce','Remediate') -and -not $BreakGlass) {
+                foreach ($failure in $clusterValidation.Failures) {
+                    $failures.Add($failure)
+                }
+            }
+            else {
+                foreach ($failure in $clusterValidation.Failures) {
+                    $warnings.Add("Cluster validation warning: $failure")
+                }
+            }
+        }
+        elseif ($clusterValidation.ReportPath) {
+            Write-HVLog -Message "Pre-flight: Test-Cluster report available at '$($clusterValidation.ReportPath)'." -Level 'INFO'
+        }
+    }
+    elseif ($SkipClusterValidation) {
+        $warnings.Add('Cluster validation skipped by request.')
+    }
+
     $passed = $failures.Count -eq 0
 
     if ($passed) {
@@ -119,9 +242,10 @@ function Test-HVPrerequisites {
     foreach ($w in $warnings) { Write-HVLog -Message "  WARN: $w" -Level 'WARN' }
 
     return [PSCustomObject]@{
-        Passed   = $passed
-        Failures = $failures.ToArray()
-        Warnings = $warnings.ToArray()
-        OSProfile = $osProfile
+        Passed            = $passed
+        Failures          = $failures.ToArray()
+        Warnings          = $warnings.ToArray()
+        OSProfile         = $osProfile
+        ClusterValidation = $clusterValidation
     }
 }

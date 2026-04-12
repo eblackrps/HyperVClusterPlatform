@@ -1,4 +1,4 @@
-function New-HVClusterSnapshot {
+﻿function Export-HVClusterSnapshot {
     <#
     .SYNOPSIS
         Captures a comprehensive pre-change snapshot of the cluster state to JSON.
@@ -14,7 +14,9 @@ function New-HVClusterSnapshot {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$ReportsPath,
-        [string]$Label = 'PreChange'
+        [string]$Label = 'PreChange',
+        [string]$ClusterName = '',
+        [int]$MaxArtifactsToKeep = 30
     )
 
     if (-not (Test-Path $ReportsPath)) {
@@ -40,8 +42,12 @@ function New-HVClusterSnapshot {
     }
 
     $safeName = $Label -replace '[^\w\-]', '_'
-    $path     = Join-Path $ReportsPath ("Snapshot-{0}-{1}.json" -f $safeName, (Get-Date -Format 'yyyyMMddHHmmss'))
+    $path = Get-HVArtifactPath -Directory $ReportsPath -Prefix 'Snapshot' -Extension 'json' -Identity @(
+        $ClusterName
+        $safeName
+    )
     $snapshot | ConvertTo-Json -Depth 10 | Out-File -FilePath $path -Encoding UTF8
+    Invoke-HVArtifactRetention -Path $ReportsPath -Filter 'Snapshot-*.json' -MaxFiles $MaxArtifactsToKeep
     Write-HVLog -Message "Snapshot saved: $path (ClusterExistedBefore=$clusterExistedBefore)" -Level 'INFO'
     return $path
 }

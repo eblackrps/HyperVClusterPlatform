@@ -1,4 +1,4 @@
-function New-HVDRSnapshot {
+function Export-HVDRSnapshot {
     <#
     .SYNOPSIS
         Creates a Disaster Recovery snapshot that extends the standard pre-change
@@ -62,7 +62,11 @@ function New-HVDRSnapshot {
         ReplicaStatus        = $replicaInfo
     }
 
-    $path = Join-Path $ReportsPath ("DR-Snapshot-{0}.json" -f (Get-Date -Format 'yyyyMMddHHmmss'))
+    $path = Get-HVArtifactPath -Directory $ReportsPath -Prefix 'DR-Snapshot' -Extension 'json' -Identity @(
+        $snapshot.ClusterName
+        $PrimarySite
+        $SecondarySite
+    )
     $snapshot | ConvertTo-Json -Depth 10 | Out-File -FilePath $path -Encoding UTF8
     Write-HVLog -Message "DR snapshot saved: $path" -Level 'INFO'
     return $path
@@ -139,7 +143,7 @@ function Invoke-HVDRFailover {
     .OUTPUTS
         PSCustomObject: Success, MigratedVMs (object[]), DrainedNodes (string[]), Errors (string[]).
     #>
-    [CmdletBinding()]
+    [CmdletBinding(SupportsShouldProcess)]
     param(
         [Parameter(Mandatory)][string[]]$SourceNodes,
         [string[]]$TargetNodes      = @(),
@@ -155,7 +159,7 @@ function Invoke-HVDRFailover {
     Write-HVLog -Message "Source nodes: $($SourceNodes -join ', ')" -Level 'WARN'
 
     # Take DR snapshot
-    $snapPath = New-HVDRSnapshot -ReportsPath $DRSnapshotPath
+    $snapPath = Export-HVDRSnapshot -ReportsPath $DRSnapshotPath
     Write-HVLog -Message "DR snapshot: $snapPath" -Level 'INFO'
 
     foreach ($node in $SourceNodes) {
@@ -164,7 +168,9 @@ function Invoke-HVDRFailover {
 
             if ($Planned) {
                 # Graceful: pause then drain
-                Suspend-ClusterNode -Name $node -Drain -ErrorAction Stop
+                if ($PSCmdlet.ShouldProcess($node, 'Suspend and drain cluster node')) {
+                    Suspend-ClusterNode -Name $node -Drain -ErrorAction Stop
+                }
             }
             else {
                 # Emergency: move roles immediately
@@ -174,7 +180,9 @@ function Invoke-HVDRFailover {
                     try {
                         $moveParams = @{ Name = $vm.Name; ErrorAction = 'Stop' }
                         if ($TargetNodes.Count -gt 0) { $moveParams['Node'] = $TargetNodes[0] }
-                        Move-ClusterVirtualMachineRole @moveParams | Out-Null
+                        if ($PSCmdlet.ShouldProcess($vm.Name, "Emergency move VM from '$node'")) {
+                            Move-ClusterVirtualMachineRole @moveParams | Out-Null
+                        }
                         $dest = (Get-ClusterGroup -Name $vm.Name -ErrorAction SilentlyContinue).OwnerNode.Name
                         $migratedVMs.Add([PSCustomObject]@{ VMName = $vm.Name; From = $node; To = $dest; Success = $true })
                         Write-HVLog -Message "  VM '$($vm.Name)' moved to '$dest'." -Level 'INFO'

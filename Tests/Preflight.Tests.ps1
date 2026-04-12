@@ -136,13 +136,20 @@ Describe "Test-HVPrerequisites" {
 Describe "Test-HVNodeReadiness" {
 
     Context "Successful node" {
-
-        It "Returns Passed=true when WinRM session is established" {
-            # Invoke-Command is intentionally NOT mocked: the real IC fails on the dummy
-            # PSSession object, but each failure is caught in its own inner try/catch as a
-            # warning (not a failure), so $passed stays $true.
+        BeforeEach {
             Mock Test-Connection { $true }
             Mock New-PSSession { [PSCustomObject]@{ Id = 1 } }
+            Mock Get-HVNodeRemoteOSProfile { [PSCustomObject]@{ Build = 20348; Version = '2022'; DisplayName = 'Windows Server 2022' } }
+            Mock Get-HVNodeRemoteDomain { 'corp.local' }
+            Mock Get-HVNodeRemoteFeatures {
+                foreach ($feature in $RequiredFeatures) {
+                    [PSCustomObject]@{ Name = $feature; State = 'Installed' }
+                }
+            }
+            Mock Remove-PSSession { }
+        }
+
+        It "Returns Passed=true when WinRM session is established" {
             $results = Test-HVNodeReadiness -Nodes @('NODE1')
             $results[0].Passed | Should -Be $true
         }

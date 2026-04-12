@@ -1,46 +1,55 @@
+function Test-HVConfigUsesSecretReferences {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)]$Config)
+
+    $sensitiveProperties = @($Config.PSObject.Properties | Where-Object {
+        $_.Name -match '(?i)(key|password|token|credential)' -and
+        $_.Name -notlike '*SecretName'
+    })
+    $secretReferenceProperties = @($Config.PSObject.Properties | Where-Object { $_.Name -like '*SecretName' })
+
+    $cleartextSensitive = @(
+        $sensitiveProperties |
+            Where-Object {
+                $null -ne $_.Value -and
+                (-not ($_.Value -is [string]) -or -not [string]::IsNullOrWhiteSpace($_.Value))
+            }
+    )
+
+    return [PSCustomObject]@{
+        UsesSecretReferences = ($secretReferenceProperties.Count -gt 0)
+        CleartextSensitive   = $cleartextSensitive.Name
+    }
+}
+
 function Invoke-HVCertificationSuite {
     <#
     .SYNOPSIS
-        Runs a comprehensive production-readiness certification against a deployed cluster.
-        Aggregates results from all platform modules into a single certification verdict.
-    .DESCRIPTION
-        Certification domains (each scored 0-100, weighted equally):
-          1. Cluster Core        — name, nodes, CNO reachable
-          2. Quorum / Witness    — witness type and health
-          3. Node Health         — all nodes Up, features installed
-          4. Network             — cluster networks assigned and live migration capable
-          5. Storage             — CSVs online, minimum capacity
-          6. VM Placement        — preferred owners and anti-affinity configured
-          7. Live Migration      — migration enabled and tested across all node pairs
-          8. DR Readiness        — snapshot, replication, failover readiness
-          9. Security            — no credentials in config, SecretManagement in use
-         10. Compliance Report   — drift score <= 5 after last Enforce run
-    .PARAMETER ClusterName
-        Expected cluster name.
-    .PARAMETER Nodes
-        Expected node list.
-    .PARAMETER ReportsPath
-        Directory for certification output.
-    .PARAMETER SkipLiveMigrationTest
-        Skip the live migration connectivity test (requires VMs to be running).
-    .OUTPUTS
-        PSCustomObject: Certified (bool), OverallScore (0-100), Domains (object[]),
-        ReportPath (string), Timestamp.
+        Runs a production-readiness certification against a deployed cluster.
     #>
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)][string]  $ClusterName,
+        [Parameter(Mandatory)][string]$ClusterName,
         [Parameter(Mandatory)][string[]]$Nodes,
         [ValidateSet('None','Disk','Cloud','Share')][string]$WitnessType = '',
-        [string]$ReportsPath              = '.\Reports',
+        [string]$WitnessDiskName = '',
+        [string]$FileShareWitnessPath = '',
+        [hashtable]$DesiredNetworkRoleMap = @{},
+        [int]$DesiredCSVCount = 0,
+        [double]$DesiredMinTotalGB = 0,
+        [hashtable]$DesiredPreferredOwners = @{},
+        [hashtable]$DesiredAntiAffinityGroups = @{},
+        [string]$ConfigFile = '',
+        [switch]$RequireSecretBackedConfig,
+        [string]$ReportsPath = '.\Reports',
         [switch]$SkipLiveMigrationTest
     )
 
-    Write-HVLog -Message "=== CERTIFICATION SUITE STARTING ===" -Level 'INFO'
-    Write-HVLog -Message "Cluster: $ClusterName  Nodes: [$($Nodes -join ',')]" -Level 'INFO'
+    Write-HVLog -Message '=== CERTIFICATION SUITE STARTING ===' -Level 'INFO'
+    Write-HVLog -Message "Cluster: $ClusterName Nodes: [$($Nodes -join ',')]" -Level 'INFO'
 
     $domains = [System.Collections.Generic.List[object]]::new()
-    $ts      = Get-Date
+    $ts = Get-Date
 
     function Add-Domain {
         param([string]$Name, [int]$Score, [string[]]$Details, [bool]$Pass)
@@ -50,11 +59,9 @@ function Invoke-HVCertificationSuite {
             Pass    = $Pass
             Details = $Details
         })
-        $icon = if ($Pass) { 'PASS' } else { 'FAIL' }
-        Write-HVLog -Message "  [$icon] $Name — $Score/100" -Level $(if ($Pass){'INFO'} else {'WARN'})
+        Write-HVLog -Message "[$(if ($Pass) { 'PASS' } else { 'FAIL' })] $Name - $Score/100" -Level $(if ($Pass) { 'INFO' } else { 'WARN' })
     }
 
-    # ── 1. Cluster Core ───────────────────────────────────────────────────────
     $cluster = Get-Cluster -ErrorAction SilentlyContinue
     if (-not $cluster -or $cluster.Name -ne $ClusterName) {
         Add-Domain 'ClusterCore' 0 @("Cluster '$ClusterName' not found or name mismatch.") $false
@@ -63,108 +70,117 @@ function Invoke-HVCertificationSuite {
         $currentNodes = @(Get-ClusterNode -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name)
         $diff = Compare-Object ($Nodes | Sort-Object) ($currentNodes | Sort-Object) -ErrorAction SilentlyContinue
         if ($diff) {
-            Add-Domain 'ClusterCore' 50 @("Node membership mismatch.") $false
+            Add-Domain 'ClusterCore' 50 @('Node membership mismatch.') $false
         }
         else {
-            Add-Domain 'ClusterCore' 100 @("Cluster '$ClusterName' with $($Nodes.Count) nodes — OK.") $true
+            Add-Domain 'ClusterCore' 100 @("Cluster '$ClusterName' has expected node membership.") $true
         }
     }
 
-    # ── 2. Quorum / Witness ───────────────────────────────────────────────────
-    try {
-        $q = Get-ClusterQuorum -ErrorAction Stop
-        if ($q.QuorumType -notmatch 'Majority|Disk|Cloud|FileShare') {
-            Add-Domain 'Quorum' 50 @("Unexpected quorum type: $($q.QuorumType).") $false
-        }
-        else {
-            Add-Domain 'Quorum' 100 @("Quorum: $($q.QuorumType) — OK.") $true
-        }
-    }
-    catch {
-        Add-Domain 'Quorum' 0 @("Could not query quorum: $($_.Exception.Message).") $false
-    }
+    $currentState = Get-HVClusterCurrentState
+    $effectiveWitnessType = if ($WitnessType) { $WitnessType } elseif ($currentState) { ConvertTo-HVWitnessType -QuorumType $currentState.WitnessType } else { 'None' }
+    $desired = Get-HVDesiredState -ClusterName $ClusterName -Nodes $Nodes -WitnessType $effectiveWitnessType `
+        -WitnessDiskName $WitnessDiskName -FileShareWitnessPath $FileShareWitnessPath
+    $drift = if ($currentState) { Get-HVDriftScore -Desired $desired -Current $currentState } else { [PSCustomObject]@{ Score = 100; Details = @('No cluster state.') } }
+    $quorumIssues = @($drift.Details | Where-Object { $_ -match '^Witness' })
+    $quorumScore = if ($quorumIssues.Count -eq 0) { 100 } else { 50 }
+    $quorumDetails = if ($quorumIssues.Count -eq 0) { @('Witness configuration matches desired state.') } else { @($quorumIssues) }
+    Add-Domain 'Quorum' $quorumScore $quorumDetails ($quorumIssues.Count -eq 0)
 
-    # ── 3. Node Health ────────────────────────────────────────────────────────
     $health = Get-HVClusterHealth
-    $allUp  = @($health.Nodes | Where-Object { -not $_.Healthy }).Count -eq 0
+    $allUp = @($health.Nodes | Where-Object { -not $_.Healthy }).Count -eq 0
     Add-Domain 'NodeHealth' $health.Score @($health.Details) $allUp
 
-    # ── 4. Network ────────────────────────────────────────────────────────────
-    try {
-        $nets     = Get-ClusterNetwork -ErrorAction SilentlyContinue
-        $noNets   = @($nets).Count -eq 0
-        $netScore = if ($noNets) { 0 } else { 80 }
-        $hasLM    = $nets | Where-Object { $_.Role -ge 1 }
-        if ($hasLM) { $netScore = 100 }
-        Add-Domain 'Network' $netScore @(if ($noNets){"No cluster networks found."}else{"$(@($nets).Count) cluster network(s) configured."}) ($netScore -ge 80)
+    if ($DesiredNetworkRoleMap.Count -gt 0) {
+        $networkDrift = Get-HVNetworkDrift -DesiredRoleMap $DesiredNetworkRoleMap
+        Add-Domain 'Network' (100 - $networkDrift.Score) @($networkDrift.Details) ($networkDrift.Score -eq 0)
     }
-    catch {
-        Add-Domain 'Network' 0 @($_.Exception.Message) $false
+    else {
+        $networks = @(Get-ClusterNetwork -ErrorAction SilentlyContinue)
+        $networkDetails = if ($networks.Count -eq 0) { @('No cluster networks found.') } else { @('No desired network role policy provided for certification.') }
+        $networkScore = if ($networks.Count -eq 0) { 0 } else { 60 }
+        Add-Domain 'Network' $networkScore $networkDetails $false
     }
 
-    # ── 5. Storage ────────────────────────────────────────────────────────────
-    $storage = Get-HVStorageDrift
-    Add-Domain 'Storage' (100 - $storage.Score) @($storage.Details) ($storage.Score -le 10)
+    if ($DesiredCSVCount -gt 0 -or $DesiredMinTotalGB -gt 0) {
+        $storage = Get-HVStorageDrift -DesiredCSVCount $DesiredCSVCount -DesiredMinTotalGB $DesiredMinTotalGB
+        Add-Domain 'Storage' (100 - $storage.Score) @($storage.Details) ($storage.Score -eq 0)
+    }
+    else {
+        $csvs = @(Get-HVCSVState)
+        $storageDetails = if ($csvs.Count -eq 0) { @('No Cluster Shared Volumes found.') } else { @('No storage capacity/count policy provided for certification.') }
+        $storageScore = if ($csvs.Count -eq 0) { 0 } else { 60 }
+        Add-Domain 'Storage' $storageScore $storageDetails $false
+    }
 
-    # ── 6. VM Placement ───────────────────────────────────────────────────────
     $placement = Get-HVVMPlacementState
-    $vmCount   = @($placement.VMs).Count
-    Add-Domain 'VMPlacement' 100 @("$vmCount VM(s) found in cluster.") $true
+    $vmCount = @($placement.VMs).Count
+    if ($vmCount -eq 0) {
+        Add-Domain 'VMPlacement' 100 @('No clustered VMs require placement policy.') $true
+    }
+    elseif ($DesiredPreferredOwners.Count -gt 0 -or $DesiredAntiAffinityGroups.Count -gt 0) {
+        $placementDrift = Get-HVVMPlacementDrift -DesiredPreferredOwners $DesiredPreferredOwners -DesiredAntiAffinityGroups $DesiredAntiAffinityGroups
+        Add-Domain 'VMPlacement' (100 - $placementDrift.Score) @($placementDrift.Details) ($placementDrift.Score -eq 0)
+    }
+    else {
+        Add-Domain 'VMPlacement' 60 @('Clustered VMs exist, but no placement policy was provided for certification.') $false
+    }
 
-    # ── 7. Live Migration ─────────────────────────────────────────────────────
     if (-not $SkipLiveMigrationTest) {
-        $lmReady  = Get-HVMigrationReadiness -Nodes $Nodes
+        $lmReady = Get-HVMigrationReadiness -Nodes $Nodes
         $notReady = @($lmReady | Where-Object { -not $_.Ready })
-        $lmScore  = [math]::Round(($lmReady.Count - $notReady.Count) / [math]::Max($lmReady.Count, 1) * 100)
+        $lmScore = [math]::Round((($lmReady.Count - $notReady.Count) / [math]::Max($lmReady.Count, 1)) * 100)
         Add-Domain 'LiveMigration' $lmScore @($notReady | ForEach-Object { "$($_.NodeName): $($_.Issues -join '; ')" }) ($notReady.Count -eq 0)
     }
     else {
         Add-Domain 'LiveMigration' 100 @('Skipped (-SkipLiveMigrationTest).') $true
     }
 
-    # ── 8. DR Readiness ───────────────────────────────────────────────────────
     $dr = Test-HVDRReadiness
     Add-Domain 'DRReadiness' $dr.Score @($dr.Checks | ForEach-Object { "$($_.Check): $($_.Detail)" }) $dr.Ready
 
-    # ── 9. Security ───────────────────────────────────────────────────────────
-    $secretMgmtAvail = $null -ne (Get-Module -ListAvailable 'Microsoft.PowerShell.SecretManagement' -ErrorAction SilentlyContinue)
-    $secScore = if ($secretMgmtAvail) { 100 } else { 60 }
-    Add-Domain 'Security' $secScore @(if ($secretMgmtAvail){'SecretManagement module available.'}else{'Install Microsoft.PowerShell.SecretManagement for full marks.'}) ($secScore -ge 80)
-
-    # ── 10. Compliance (drift) ────────────────────────────────────────────────
-    $current = Get-HVClusterCurrentState
-    $effectiveWitnessType = $WitnessType
-    if (-not $effectiveWitnessType) {
-        $effectiveWitnessType = switch -Regex ($current.WitnessType) {
-            'Disk'       { 'Disk'; break }
-            'Cloud'      { 'Cloud'; break }
-            'FileShare'  { 'Share'; break }
-            'Share'      { 'Share'; break }
-            default      { 'None' }
+    $secretMgmtAvailable = $null -ne (Get-Module -ListAvailable 'Microsoft.PowerShell.SecretManagement' -ErrorAction SilentlyContinue)
+    if ($ConfigFile) {
+        $cfg = Import-HVClusterConfig -ConfigPath $ConfigFile
+        $configSecrets = Test-HVConfigUsesSecretReferences -Config $cfg
+        if ($configSecrets.CleartextSensitive.Count -gt 0) {
+            Add-Domain 'Security' 0 @("Sensitive config values are stored in cleartext: $($configSecrets.CleartextSensitive -join ', ')") $false
+        }
+        elseif ($RequireSecretBackedConfig -and -not $configSecrets.UsesSecretReferences) {
+            Add-Domain 'Security' 50 @('Secret-backed config was required, but no SecretName references were found.') $false
+        }
+        elseif (-not $secretMgmtAvailable) {
+            Add-Domain 'Security' 60 @('Microsoft.PowerShell.SecretManagement is not installed.') $false
+        }
+        else {
+            Add-Domain 'Security' 100 @('Config uses secret references and SecretManagement is available.') $true
         }
     }
-    $desired = New-HVDesiredState -ClusterName $ClusterName -Nodes $Nodes -WitnessType $effectiveWitnessType
-    $drift   = if ($current) { Get-HVDriftScore -Desired $desired -Current $current } else { [PSCustomObject]@{ Score=100; Details=@('No cluster state.') } }
+    else {
+        $securityScore = if ($secretMgmtAvailable) { 60 } else { 40 }
+        Add-Domain 'Security' $securityScore @('No config file was provided, so certification cannot verify secret-backed configuration.') $false
+    }
+
     $compScore = 100 - $drift.Score
     Add-Domain 'Compliance' $compScore @($drift.Details) ($drift.Score -le 10)
 
-    # ── Overall ────────────────────────────────────────────────────────────────
-    $allDomains   = $domains.ToArray()
+    $allDomains = $domains.ToArray()
     $overallScore = [math]::Round(($allDomains | Measure-Object -Property Score -Average).Average)
-    $certified    = ($allDomains | Where-Object { -not $_.Pass }).Count -eq 0
+    $certified = ($allDomains | Where-Object { -not $_.Pass }).Count -eq 0
 
-    Write-HVLog -Message "=== CERTIFICATION $(if ($certified){'PASSED'}else{'FAILED'}) — Overall: $overallScore/100 ===" -Level $(if ($certified){'INFO'} else {'WARN'})
+    Write-HVLog -Message "=== CERTIFICATION $(if ($certified) { 'PASSED' } else { 'FAILED' }) - Overall: $overallScore/100 ===" -Level $(if ($certified) { 'INFO' } else { 'WARN' })
 
-    # ── Certification HTML Report ─────────────────────────────────────────────
     if (-not (Test-Path $ReportsPath)) { New-Item -ItemType Directory -Path $ReportsPath -Force | Out-Null }
 
+    $encode = [System.Net.WebUtility]
     $domainRows = $allDomains | ForEach-Object {
         $color = if ($_.Pass) { '#2d7a2d' } else { '#c0392b' }
-        $icon  = if ($_.Pass) { '&#10003;' } else { '&#10007;' }
-        "<tr><td>$($_.Domain)</td><td style='color:$color;font-weight:bold'>$icon $($_.Score)/100</td><td>$($_.Details -join '<br>')</td></tr>"
+        $icon = if ($_.Pass) { '&#10003;' } else { '&#10007;' }
+        $detailHtml = (@($_.Details) | ForEach-Object { $encode::HtmlEncode([string]$_) }) -join '<br>'
+        "<tr><td>$($encode::HtmlEncode($_.Domain))</td><td style='color:$color;font-weight:bold'>$icon $($_.Score)/100</td><td>$detailHtml</td></tr>"
     }
 
-    $certColor  = if ($certified) { '#2d7a2d' } else { '#c0392b' }
+    $certColor = if ($certified) { '#2d7a2d' } else { '#c0392b' }
     $certStatus = if ($certified) { 'CERTIFIED' } else { 'NOT CERTIFIED' }
 
     $html = @"
@@ -181,15 +197,18 @@ td{padding:8px 12px;border-bottom:1px solid #eee;vertical-align:top}
 </style></head><body>
 <div class='card'>
 <h1>HyperV Cluster Certification Report</h1>
-<p><strong>Cluster:</strong> $ClusterName &nbsp;|&nbsp; <strong>Generated:</strong> $($ts.ToString('yyyy-MM-dd HH:mm:ss'))</p>
-<p class='badge'>$certStatus — $overallScore / 100</p>
+<p><strong>Cluster:</strong> $($encode::HtmlEncode($ClusterName)) &nbsp;|&nbsp; <strong>Generated:</strong> $($ts.ToString('yyyy-MM-dd HH:mm:ss'))</p>
+<p class='badge'>$certStatus - $overallScore / 100</p>
 <table><tr><th>Domain</th><th>Score</th><th>Detail</th></tr>
 $($domainRows -join "`n")
 </table></div></body></html>
 "@
 
-    $reportPath = Join-Path $ReportsPath ("Certification-{0}.html" -f $ts.ToString('yyyyMMddHHmmss'))
+    $reportPath = Get-HVArtifactPath -Directory $ReportsPath -Prefix 'Certification' -Extension 'html' -Identity @(
+        $ClusterName
+    )
     $html | Out-File -FilePath $reportPath -Encoding UTF8
+    Invoke-HVArtifactRetention -Path $ReportsPath -Filter 'Certification-*.html' -MaxFiles 30
     Write-HVLog -Message "Certification report: $reportPath" -Level 'INFO'
 
     return [PSCustomObject]@{

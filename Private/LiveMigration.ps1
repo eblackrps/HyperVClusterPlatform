@@ -79,7 +79,7 @@ function Set-HVLiveMigrationConfig {
     .PARAMETER MaxBandwidthMbps
         Bandwidth limit in Mbps (0 = unlimited). Default: 0.
     #>
-    [CmdletBinding()]
+    [CmdletBinding(SupportsShouldProcess)]
     param(
         [string[]]$Nodes,
         [bool]   $Enabled           = $true,
@@ -97,22 +97,28 @@ function Set-HVLiveMigrationConfig {
             $vmHost = Get-VMHost -ComputerName $node -ErrorAction Stop
 
             if ($vmHost.VirtualMachineMigrationEnabled -ne $Enabled) {
-                Write-HVLog -Message "[$node] Setting VM migration enabled=$Enabled." -Level 'WARN'
-                Set-VMHost -ComputerName $node -VirtualMachineMigrationEnabled $Enabled -ErrorAction Stop
+                if ($PSCmdlet.ShouldProcess($node, "Set VM migration enabled=$Enabled")) {
+                    Write-HVLog -Message "[$node] Setting VM migration enabled=$Enabled." -Level 'WARN'
+                    Set-VMHost -ComputerName $node -VirtualMachineMigrationEnabled $Enabled -ErrorAction Stop
+                }
             }
 
             if ($Enabled) {
                 $authMap = @{ 'Kerberos' = 'Kerberos'; 'CredSSP' = 'CredSsp' }
                 if ($vmHost.VirtualMachineMigrationAuthenticationType -ne $authMap[$AuthenticationType]) {
-                    Write-HVLog -Message "[$node] Setting migration auth=$AuthenticationType." -Level 'WARN'
-                    Set-VMHost -ComputerName $node `
-                               -VirtualMachineMigrationAuthenticationType $authMap[$AuthenticationType] `
-                               -ErrorAction Stop
+                    if ($PSCmdlet.ShouldProcess($node, "Set migration auth=$AuthenticationType")) {
+                        Write-HVLog -Message "[$node] Setting migration auth=$AuthenticationType." -Level 'WARN'
+                        Set-VMHost -ComputerName $node `
+                                   -VirtualMachineMigrationAuthenticationType $authMap[$AuthenticationType] `
+                                   -ErrorAction Stop
+                    }
                 }
 
                 if ($vmHost.MaximumVirtualMachineMigrations -ne $MaxSimultaneous) {
-                    Write-HVLog -Message "[$node] Setting max simultaneous migrations=$MaxSimultaneous." -Level 'INFO'
-                    Set-VMHost -ComputerName $node -MaximumVirtualMachineMigrations $MaxSimultaneous -ErrorAction Stop
+                    if ($PSCmdlet.ShouldProcess($node, "Set max simultaneous migrations=$MaxSimultaneous")) {
+                        Write-HVLog -Message "[$node] Setting max simultaneous migrations=$MaxSimultaneous." -Level 'INFO'
+                        Set-VMHost -ComputerName $node -MaximumVirtualMachineMigrations $MaxSimultaneous -ErrorAction Stop
+                    }
                 }
 
                 if ($MaxBandwidthMbps -gt 0) {
@@ -141,7 +147,7 @@ function Start-HVLiveMigration {
     .OUTPUTS
         PSCustomObject[]: VMName, Success, DestinationNode, Error.
     #>
-    [CmdletBinding()]
+    [CmdletBinding(SupportsShouldProcess)]
     param(
         [Parameter(Mandatory)][string[]]$VMNames,
         [string]$DestinationNode,
@@ -167,7 +173,9 @@ function Start-HVLiveMigration {
             $moveParams = @{ Name = $vmName; ErrorAction = 'Stop' }
             if ($DestinationNode) { $moveParams['Node'] = $DestinationNode }
 
-            Move-ClusterVirtualMachineRole @moveParams | Out-Null
+            if ($PSCmdlet.ShouldProcess($vmName, "Live migrate VM$(if ($DestinationNode) { " to $DestinationNode" })")) {
+                Move-ClusterVirtualMachineRole @moveParams | Out-Null
+            }
 
             $group = Get-ClusterGroup -Name $vmName -ErrorAction SilentlyContinue
             $dest  = if ($group) { $group.OwnerNode.Name } else { $DestinationNode }

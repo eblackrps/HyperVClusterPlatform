@@ -31,6 +31,37 @@ function Test-HVConfigAnyValue {
     return $false
 }
 
+function Test-HVValidIPv4Address {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Value)
+
+    $ipAddress = $null
+    if (-not [System.Net.IPAddress]::TryParse($Value, [ref]$ipAddress)) {
+        return $false
+    }
+
+    return ($ipAddress.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetwork)
+}
+
+function Test-HVProdEnvironment {
+    [CmdletBinding()]
+    param([string]$Environment)
+
+    return ($Environment -match '^(?i)(prod|production)$')
+}
+
+function Get-HVNormalizedNodeList {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][object[]]$Nodes)
+
+    return @(
+        $Nodes |
+            ForEach-Object { [string]$_ } |
+            ForEach-Object { $_.Trim() } |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+    )
+}
+
 function Import-HVClusterConfig {
     <#
     .SYNOPSIS
@@ -73,11 +104,17 @@ function Import-HVClusterConfig {
     }
 
     $defaultValues = [ordered]@{
-        Mode               = 'Audit'
-        ReportsPath        = '.\Reports'
-        LogPath            = '.\Logs'
-        SkipPreFlight      = $false
-        SkipNodeValidation = $false
+        Mode                   = 'Audit'
+        ReportsPath            = '.\Reports'
+        LogPath                = '.\Logs'
+        SkipPreFlight          = $false
+        SkipNodeValidation     = $false
+        SkipClusterValidation  = $false
+        BreakGlass             = $false
+        PlanOnly               = $false
+        EmitTelemetry          = $true
+        SkipArtifactPersistence = $false
+        RetainArtifactCount    = 30
     }
     foreach ($key in $defaultValues.Keys) {
         if (-not $cfg.Contains($key) -or
@@ -87,8 +124,15 @@ function Import-HVClusterConfig {
         }
     }
 
+    $cfg['Nodes'] = Get-HVNormalizedNodeList -Nodes @($cfg['Nodes'])
     $cfg['SkipPreFlight'] = [bool]$cfg['SkipPreFlight']
     $cfg['SkipNodeValidation'] = [bool]$cfg['SkipNodeValidation']
+    $cfg['SkipClusterValidation'] = [bool]$cfg['SkipClusterValidation']
+    $cfg['BreakGlass'] = [bool]$cfg['BreakGlass']
+    $cfg['PlanOnly'] = [bool]$cfg['PlanOnly']
+    $cfg['EmitTelemetry'] = [bool]$cfg['EmitTelemetry']
+    $cfg['SkipArtifactPersistence'] = [bool]$cfg['SkipArtifactPersistence']
+    $cfg['RetainArtifactCount'] = [int]$cfg['RetainArtifactCount']
 
     # Apply environment-specific overrides
     if ($Environment -and $raw.Environments -and $raw.Environments.$Environment) {
@@ -117,6 +161,16 @@ function Import-HVClusterConfig {
         }
     }
 
+    $cfg['Nodes'] = Get-HVNormalizedNodeList -Nodes @($cfg['Nodes'])
+    $cfg['SkipPreFlight'] = [bool]$cfg['SkipPreFlight']
+    $cfg['SkipNodeValidation'] = [bool]$cfg['SkipNodeValidation']
+    $cfg['SkipClusterValidation'] = [bool]$cfg['SkipClusterValidation']
+    $cfg['BreakGlass'] = [bool]$cfg['BreakGlass']
+    $cfg['PlanOnly'] = [bool]$cfg['PlanOnly']
+    $cfg['EmitTelemetry'] = [bool]$cfg['EmitTelemetry']
+    $cfg['SkipArtifactPersistence'] = [bool]$cfg['SkipArtifactPersistence']
+    $cfg['RetainArtifactCount'] = [int]$cfg['RetainArtifactCount']
+
     # Validate mandatory fields
     $required = @('ClusterName','Nodes','ClusterIP','WitnessType')
     foreach ($field in $required) {
@@ -130,9 +184,22 @@ function Import-HVClusterConfig {
         throw "Config validation error: WitnessType must be one of: $($validWitness -join ', '). Got: '$($cfg['WitnessType'])'."
     }
 
+    if (-not (Test-HVValidIPv4Address -Value ([string]$cfg['ClusterIP']))) {
+        throw "Config validation error: ClusterIP '$($cfg['ClusterIP'])' is not a valid IPv4 address."
+    }
+
+    $duplicateNodes = @($cfg['Nodes'] | Group-Object | Where-Object Count -gt 1 | Select-Object -ExpandProperty Name)
+    if ($duplicateNodes.Count -gt 0) {
+        throw "Config validation error: duplicate node names found: $($duplicateNodes -join ', ')."
+    }
+
     $validModes = @('Audit','Enforce','Remediate')
     if ($cfg['Mode'] -notin $validModes) {
         throw "Config validation error: Mode must be one of: $($validModes -join ', '). Got: '$($cfg['Mode'])'."
+    }
+
+    if ($cfg['WitnessType'] -eq 'Disk' -and -not (Test-HVConfigAnyValue -Config $cfg -Keys @('WitnessDiskName'))) {
+        throw "Config validation error: WitnessType='Disk' requires WitnessDiskName for safe quorum targeting."
     }
 
     if ($cfg['WitnessType'] -eq 'Cloud' -and
@@ -142,6 +209,37 @@ function Import-HVClusterConfig {
     }
     if ($cfg['WitnessType'] -eq 'Share' -and -not (Test-HVConfigAnyValue -Config $cfg -Keys @('FileShareWitnessPath','FileShareWitnessPathSecretName'))) {
         throw "Config validation error: WitnessType='Share' requires FileShareWitnessPath."
+    }
+    if ($cfg['WitnessType'] -eq 'Share' -and $cfg['FileShareWitnessPath'] -and ([string]$cfg['FileShareWitnessPath'] -notmatch '^\\\\')) {
+        throw "Config validation error: FileShareWitnessPath must be a UNC path."
+    }
+    if ($cfg['WitnessType'] -ne 'Cloud' -and
+        (Test-HVConfigAnyValue -Config $cfg -Keys @('CloudWitnessStorageAccount','CloudWitnessStorageKey','CloudWitnessStorageKeySecretName'))) {
+        throw "Config validation error: Cloud witness settings are present while WitnessType is '$($cfg['WitnessType'])'."
+    }
+    if ($cfg['WitnessType'] -ne 'Share' -and
+        (Test-HVConfigAnyValue -Config $cfg -Keys @('FileShareWitnessPath','FileShareWitnessPathSecretName'))) {
+        throw "Config validation error: File share witness settings are present while WitnessType is '$($cfg['WitnessType'])'."
+    }
+    if ($cfg['WitnessType'] -ne 'Disk' -and
+        (Test-HVConfigAnyValue -Config $cfg -Keys @('WitnessDiskName'))) {
+        throw "Config validation error: WitnessDiskName is present while WitnessType is '$($cfg['WitnessType'])'."
+    }
+
+    $skipFlags = @('SkipPreFlight','SkipNodeValidation','SkipClusterValidation') | Where-Object { $cfg[$_] }
+    if ($cfg['Mode'] -in @('Enforce','Remediate') -and $skipFlags.Count -gt 0 -and -not $cfg['BreakGlass']) {
+        throw "Config validation error: skip safety flags [$($skipFlags -join ', ')] require BreakGlass=true for Enforce/Remediate runs."
+    }
+    if (Test-HVProdEnvironment -Environment $Environment) {
+        if ($skipFlags.Count -gt 0 -and -not $cfg['BreakGlass']) {
+            throw "Config validation error: production environment '$Environment' cannot use skip safety flags without BreakGlass=true."
+        }
+    }
+    if ($cfg['SkipArtifactPersistence'] -and $cfg['Mode'] -in @('Enforce','Remediate')) {
+        throw "Config validation error: SkipArtifactPersistence is only supported for Audit mode."
+    }
+    if ($cfg['RetainArtifactCount'] -lt 1) {
+        throw "Config validation error: RetainArtifactCount must be >= 1."
     }
 
     Write-HVLog -Message "Config loaded: ClusterName='$($cfg.ClusterName)' Nodes=[$($cfg.Nodes -join ',')] Mode='$($cfg.Mode)' Witness='$($cfg.WitnessType)'." -Level 'INFO'

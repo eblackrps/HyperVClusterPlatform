@@ -1,15 +1,22 @@
 {
-  "_comment": "Copy this file to cluster-config.json (or prod.json, staging.json, etc.) and fill in your values. Do NOT commit files containing real credentials.",
+  "_comment": "Copy this file to cluster-config.json (or prod.json, staging.json, etc.) and fill in your values. Do NOT commit files containing real credentials. Enforce/Remediate runs fail closed when unsafe skip flags are set without BreakGlass=true.",
 
   "ClusterName":   "ProdCluster",
   "Nodes":         ["NODE1", "NODE2"],
   "ClusterIP":     "10.10.10.10",
   "WitnessType":   "Disk",
+  "WitnessDiskName": "Cluster Disk 3",
   "Mode":          "Audit",
   "ReportsPath":   ".\\Reports",
   "LogPath":       ".\\Logs",
   "SkipPreFlight":       false,
   "SkipNodeValidation":  false,
+  "SkipClusterValidation": false,
+  "BreakGlass":          false,
+  "PlanOnly":            false,
+  "EmitTelemetry":       true,
+  "SkipArtifactPersistence": false,
+  "RetainArtifactCount": 30,
 
   "_witnessComment": "Fill in ONLY the block that matches your WitnessType.",
   "CloudWitnessStorageAccount": "",
@@ -24,8 +31,8 @@
       "Nodes":               ["DEVNODE1"],
       "ClusterIP":           "192.168.1.10",
       "WitnessType":         "None",
-      "Mode":                "Enforce",
-      "SkipNodeValidation":  true
+      "Mode":                "Audit",
+      "PlanOnly":            true
     },
     "Staging": {
       "ClusterName":  "StagingCluster",
@@ -42,7 +49,8 @@
       "WitnessType":  "Cloud",
       "CloudWitnessStorageAccount": "prodstorageacct",
       "CloudWitnessStorageKeySecretName": "ProdCloudWitnessKey",
-      "Mode":         "Enforce"
+      "Mode":         "Enforce",
+      "EmitTelemetry": true
     }
   }
 }

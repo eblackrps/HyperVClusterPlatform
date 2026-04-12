@@ -1,3 +1,10 @@
+﻿function Test-HVSecretSensitiveName {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Name)
+
+    return ($Name -match '(?i)(secret|key|password|token|credential)')
+}
+
 function Get-HVSecret {
     <#
     .SYNOPSIS
@@ -15,13 +22,14 @@ function Get-HVSecret {
     .PARAMETER AllowPrompt
         If true, prompts the user for the secret when all vaults fail.
     .OUTPUTS
-        String (plaintext) or SecureString depending on -AsSecureString.
+        SecureString by default. Use -AsPlainText only when a downstream API
+        requires plaintext and no secure alternative exists.
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$SecretName,
         [string]$VaultName,
-        [switch]$AsSecureString,
+        [switch]$AsPlainText,
         [switch]$AllowPrompt
     )
 
@@ -30,14 +38,23 @@ function Get-HVSecret {
         try {
             $getParams = @{ Name = $SecretName; ErrorAction = 'Stop' }
             if ($VaultName) { $getParams['Vault'] = $VaultName }
-            if ($AsSecureString) { $getParams['AsSecureString'] = $true }
+            if (-not $AsPlainText) { $getParams['AsSecureString'] = $true }
 
             $secret = Get-Secret @getParams
-            Write-HVLog -Message "Secret '$SecretName' retrieved from SecretManagement vault." -Level 'INFO'
-            return $secret
+            Write-HVLog -Message 'Secret retrieved from SecretManagement vault.' -Level 'INFO'
+            if ($AsPlainText) {
+                if ($secret -is [System.Security.SecureString]) {
+                    return ConvertFrom-HVSecureString -SecureString $secret
+                }
+                return [string]$secret
+            }
+            if ($secret -is [System.Security.SecureString]) {
+                return $secret
+            }
+            return ConvertTo-HVSecureString -PlainText ([string]$secret)
         }
         catch {
-            Write-HVLog -Message "SecretManagement lookup failed for '$SecretName': $($_.Exception.Message)" -Level 'WARN'
+            Write-HVLog -Message "SecretManagement lookup failed: $($_.Exception.Message)" -Level 'WARN'
         }
     }
     else {
@@ -50,12 +67,12 @@ function Get-HVSecret {
         if (Get-Module -ListAvailable -Name 'CredentialManager' -ErrorAction SilentlyContinue) {
             $cred = Get-StoredCredential -Target $SecretName -ErrorAction Stop
             if ($cred) {
-                Write-HVLog -Message "Secret '$SecretName' retrieved from Windows Credential Manager." -Level 'INFO'
+                Write-HVLog -Message 'Secret retrieved from Windows Credential Manager.' -Level 'INFO'
                 $plain = $cred.GetNetworkCredential().Password
-                if ($AsSecureString) {
-                    return ConvertTo-HVSecureString -PlainText $plain
+                if ($AsPlainText) {
+                    return $plain
                 }
-                return $plain
+                return ConvertTo-HVSecureString -PlainText $plain
             }
         }
     }
@@ -67,9 +84,8 @@ function Get-HVSecret {
     if ($AllowPrompt) {
         Write-HVLog -Message "Prompting user for secret '$SecretName'." -Level 'WARN'
         $secure = Read-Host -Prompt "Enter value for secret '$SecretName'" -AsSecureString
-        if ($AsSecureString) { return $secure }
-        return [Runtime.InteropServices.Marshal]::PtrToStringAuto(
-            [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure))
+        if (-not $AsPlainText) { return $secure }
+        return ConvertFrom-HVSecureString -SecureString $secure
     }
 
     throw "Secret '$SecretName' could not be retrieved from any available vault."
@@ -101,8 +117,15 @@ function ConvertFrom-HVSecureString {
     [CmdletBinding()]
     param([Parameter(Mandatory)][System.Security.SecureString]$SecureString)
 
-    return [Runtime.InteropServices.Marshal]::PtrToStringAuto(
-        [Runtime.InteropServices.Marshal]::SecureStringToBSTR($SecureString))
+    $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($SecureString)
+    try {
+        return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
+    }
+    finally {
+        if ($bstr -ne [IntPtr]::Zero) {
+            [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+        }
+    }
 }
 
 function Resolve-HVConfigSecrets {
@@ -121,7 +144,8 @@ function Resolve-HVConfigSecrets {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)]$Config,
-        [string]$VaultName
+        [string]$VaultName,
+        [switch]$ThrowOnError
     )
 
     $resolved = 0
@@ -134,13 +158,21 @@ function Resolve-HVConfigSecrets {
                 try {
                     $getParams = @{ SecretName = $secretName }
                     if ($VaultName) { $getParams['VaultName'] = $VaultName }
-                    $plaintext = Get-HVSecret @getParams
-                    $Config | Add-Member -NotePropertyName $targetProp -NotePropertyValue $plaintext -Force
-                    Write-HVLog -Message "Resolved secret for '$targetProp' from '$secretName'." -Level 'INFO'
+                    if (Test-HVSecretSensitiveName -Name $targetProp) {
+                        $resolvedSecret = Get-HVSecret @getParams
+                    }
+                    else {
+                        $resolvedSecret = Get-HVSecret @getParams -AsPlainText
+                    }
+                    $Config | Add-Member -NotePropertyName $targetProp -NotePropertyValue $resolvedSecret -Force
+                    Write-HVLog -Message "Resolved secret for '$targetProp'." -Level 'INFO'
                     $resolved++
                 }
                 catch {
-                    Write-HVLog -Message "Could not resolve secret '$secretName' for '$targetProp': $($_.Exception.Message)" -Level 'ERROR'
+                    Write-HVLog -Message "Could not resolve secret for '$targetProp': $($_.Exception.Message)" -Level 'ERROR'
+                    if ($ThrowOnError) {
+                        throw
+                    }
                 }
             }
         }

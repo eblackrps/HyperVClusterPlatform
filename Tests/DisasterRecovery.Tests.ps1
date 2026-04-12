@@ -15,16 +15,16 @@ BeforeAll {
     Mock Get-VM                   { @() }
 }
 
-Describe "New-HVDRSnapshot" {
+Describe "Export-HVDRSnapshot" {
     It "Creates a JSON file" {
         $tmp = [System.IO.Path]::GetTempPath()
-        $path = New-HVDRSnapshot -ReportsPath $tmp -PrimarySite 'SiteA' -SecondarySite 'SiteB'
+        $path = Export-HVDRSnapshot -ReportsPath $tmp -PrimarySite 'SiteA' -SecondarySite 'SiteB'
         Test-Path $path | Should -Be $true
         Remove-Item $path -Force
     }
     It "Snapshot contains required fields" {
         $tmp  = [System.IO.Path]::GetTempPath()
-        $path = New-HVDRSnapshot -ReportsPath $tmp
+        $path = Export-HVDRSnapshot -ReportsPath $tmp
         $data = Get-Content $path -Raw | ConvertFrom-Json
         $data.PSObject.Properties.Name | Should -Contain 'SchemaVersion'
         $data.PSObject.Properties.Name | Should -Contain 'PrimarySite'

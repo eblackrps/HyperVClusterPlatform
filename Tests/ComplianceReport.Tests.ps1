@@ -5,10 +5,10 @@ BeforeAll {
     Mock Write-HVLog { }
 }
 
-Describe "New-HVComplianceReport" {
+Describe "Export-HVComplianceReport" {
     It "HTML-encodes drift details without duplicating them" {
         $tmp = [System.IO.Path]::GetTempPath()
-        $reportPath = New-HVComplianceReport `
+        $reportPath = Export-HVComplianceReport `
             -DriftResult ([PSCustomObject]@{ Score = 40; Details = @('<b>unsafe</b>') }) `
             -ReportsPath $tmp `
             -ClusterName 'ProdCluster' `

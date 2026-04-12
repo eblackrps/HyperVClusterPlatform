@@ -35,11 +35,12 @@ Describe "Module loads cleanly" {
         $exported = (Get-Command -Module HyperVClusterPlatform).Name
         $exported | Should -Not -Contain 'Write-HVLog'
         $exported | Should -Not -Contain 'Get-HVDriftScore'
-        $exported | Should -Not -Contain 'New-HVClusterSnapshot'
+        $exported | Should -Not -Contain 'Export-HVClusterSnapshot'
     }
 
-    It "Module version is 21.0.1" {
-        (Get-Module HyperVClusterPlatform).Version.ToString() | Should -Be '21.0.1'
+    It "Module version matches the manifest" {
+        $manifest = Import-PowerShellDataFile -Path "$PSScriptRoot\..\HyperVClusterPlatform.psd1"
+        (Get-Module HyperVClusterPlatform).Version.ToString() | Should -Be $manifest.ModuleVersion
     }
 }
 

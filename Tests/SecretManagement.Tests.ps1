@@ -25,15 +25,25 @@ Describe "Get-HVSecret" {
             Mock Get-Secret { 'plaintext-value' }
         }
 
-        It "Returns secret value when SecretManagement is available" {
+        It "Returns a SecureString by default when SecretManagement is available" {
             $result = Get-HVSecret -SecretName 'MySecret'
+            $result | Should -BeOfType [System.Security.SecureString]
+            ConvertFrom-HVSecureString -SecureString $result | Should -Be 'plaintext-value'
+        }
+
+        It "Returns plaintext when AsPlainText is specified" {
+            $result = Get-HVSecret -SecretName 'MySecret' -AsPlainText
             $result | Should -Be 'plaintext-value'
         }
 
-        It "Returns SecureString when AsSecureString is specified" {
-            Mock Get-Secret { ConvertTo-HVSecureString -PlainText 'secure-val' }
-            $result = Get-HVSecret -SecretName 'MySecret' -AsSecureString
-            $result | Should -BeOfType [System.Security.SecureString]
+        It "Does not log the raw secret name when retrieval succeeds" {
+            $null = Get-HVSecret -SecretName 'MySecret'
+            Should -Invoke Write-HVLog -Times 1 -ParameterFilter {
+                $Message -eq 'Secret retrieved from SecretManagement vault.'
+            }
+            Should -Not -Invoke Write-HVLog -ParameterFilter {
+                $Message -match 'MySecret'
+            }
         }
     }
 
@@ -49,9 +59,10 @@ Describe "Get-HVSecret" {
             }
         }
 
-        It "Returns value from Windows Credential Manager on fallback" {
+        It "Returns a SecureString from Windows Credential Manager by default" {
             $result = Get-HVSecret -SecretName 'MySecret'
-            $result | Should -Be 'fallback-value'
+            $result | Should -BeOfType [System.Security.SecureString]
+            ConvertFrom-HVSecureString -SecureString $result | Should -Be 'fallback-value'
         }
     }
 }
@@ -67,13 +78,20 @@ Describe "ConvertFrom-HVSecureString" {
 Describe "Resolve-HVConfigSecrets" {
     Context "Config with SecretName properties" {
         It "Resolves CloudWitnessStorageKeySecretName to CloudWitnessStorageKey" {
-            Mock Get-HVSecret { 'resolved-key' }
+            Mock Get-HVSecret { ConvertTo-HVSecureString -PlainText 'resolved-key' }
             $config = [PSCustomObject]@{
                 ClusterName                       = 'Cluster1'
                 CloudWitnessStorageKeySecretName  = 'MyStorageKey'
             }
             $result = Resolve-HVConfigSecrets -Config $config
-            $result.CloudWitnessStorageKey | Should -Be 'resolved-key'
+            $result.CloudWitnessStorageKey | Should -BeOfType [System.Security.SecureString]
+            ConvertFrom-HVSecureString -SecureString $result.CloudWitnessStorageKey | Should -Be 'resolved-key'
+            Should -Invoke Write-HVLog -Times 1 -ParameterFilter {
+                $Message -eq "Resolved secret for 'CloudWitnessStorageKey'."
+            }
+            Should -Not -Invoke Write-HVLog -ParameterFilter {
+                $Message -match 'MyStorageKey'
+            }
         }
 
         It "Handles multiple SecretName properties" {
@@ -97,6 +115,12 @@ Describe "Resolve-HVConfigSecrets" {
             Mock Get-HVSecret { throw 'Secret not found' }
             $config = [PSCustomObject]@{ MissingSecretName = 'DoesNotExist' }
             { Resolve-HVConfigSecrets -Config $config } | Should -Not -Throw
+        }
+
+        It "Throws when ThrowOnError is specified" {
+            Mock Get-HVSecret { throw 'Secret not found' }
+            $config = [PSCustomObject]@{ MissingSecretName = 'DoesNotExist' }
+            { Resolve-HVConfigSecrets -Config $config -ThrowOnError } | Should -Throw
         }
     }
 }

@@ -1,6 +1,6 @@
-@{
+﻿@{
     RootModule        = 'HyperVClusterPlatform.psm1'
-    ModuleVersion     = '21.0.1'
+    ModuleVersion     = '21.1.0'
     GUID              = 'b5c96ad8-5ffb-4f70-9e3c-3e0ff1f31d1f'
     Author            = 'E. Black'
     CompanyName       = ''
@@ -57,11 +57,14 @@
             LicenseUri   = 'https://github.com/eblackrps/HyperVClusterPlatform/blob/main/LICENSE'
             ProjectUri   = 'https://github.com/eblackrps/HyperVClusterPlatform'
             ReleaseNotes = @'
-v21.0.1 — Release alignment patch:
-  - Activated GitHub Actions CI from `.github/workflows/ci.yml`
-  - Corrected hosted-runner Pester configuration and artifact publishing behavior
-  - Refreshed workflow actions to current supported major versions
-  - Aligned README, roadmap, and module metadata with the released patch version
+v21.1.0 — Operational safety and release hardening:
+  - Fixed CLI-vs-config mode precedence so explicit operator intent wins
+  - Added unique operation-scoped artifact naming for snapshots, reports, journals, telemetry, and fleet output
+  - Surfaced rollback status, actions, and errors in platform results
+  - Split skipped cluster validation from failed cluster validation in public output
+  - Hardened fleet temp config handling and audit fleet status semantics
+  - Corrected GitHub release packaging and native command exit handling
+  - Refreshed README, roadmap, changelog, and release metadata for the shipped version
 '@
         }
     }

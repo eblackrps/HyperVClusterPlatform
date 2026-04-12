@@ -1,4 +1,4 @@
-# DSC Resource: HVClusterResource
+﻿# DSC Resource: HVClusterResource
 # Full implementation of Get/Test/Set-TargetResource for Hyper-V failover clusters.
 # Supports: Windows Server 2022 (build 20348+) and Windows Server 2025 (build 26100+).
 
@@ -23,7 +23,7 @@ function Initialize-HVDSCCommandAliases {
         @{ Name = 'Set-ClusterQuorum';        Module = 'FailoverClusters' }
     )
 
-    foreach ($moduleName in ($commandSpecs | Select-Object -ExpandProperty Module -Unique)) {
+    foreach ($moduleName in ($commandSpecs | ForEach-Object { $_['Module'] } | Select-Object -Unique)) {
         if (-not (Get-Module -Name $moduleName) -and (Get-Module -ListAvailable -Name $moduleName)) {
             try {
                 Import-Module $moduleName -ErrorAction Stop | Out-Null
@@ -64,6 +64,35 @@ function Get-WitnessType {
     catch { return 'None' }
 }
 
+function Get-WitnessResource {
+    try {
+        $q = Get-ClusterQuorum -ErrorAction Stop
+        if ($q.PSObject.Properties.Name -contains 'QuorumResource' -and $null -ne $q.QuorumResource) {
+            if ($q.QuorumResource -is [string]) {
+                return $q.QuorumResource
+            }
+            if ($q.QuorumResource.PSObject.Properties.Name -contains 'Name') {
+                return $q.QuorumResource.Name
+            }
+            return [string]$q.QuorumResource
+        }
+        return ''
+    }
+    catch {
+        return ''
+    }
+}
+
+function Import-HVPlatformModule {
+    $manifestPath = Join-Path $PSScriptRoot '..\..\HyperVClusterPlatform.psd1'
+    if (-not (Test-Path $manifestPath)) {
+        throw "Could not locate HyperVClusterPlatform manifest at '$manifestPath'."
+    }
+
+    Import-Module $manifestPath -Force -ErrorAction Stop | Out-Null
+    return $manifestPath
+}
+
 #endregion
 
 Initialize-HVDSCCommandAliases
@@ -82,6 +111,7 @@ function Get-TargetResource {
         [ValidateSet('None','Disk','Cloud','Share')][string]$WitnessType = 'None',
         [ValidateSet('Present','Absent')][string]$Ensure = 'Present',
         [string]$ClusterIP                 = '',
+        [string]$WitnessDiskName           = '',
         [string]$FileShareWitness          = '',
         [string]$CloudWitnessStorageAccount = '',
         [string]$CloudWitnessStorageKey     = ''
@@ -103,14 +133,16 @@ function Get-TargetResource {
 
     $currentNodes   = Get-ClusterNodesSafe
     $currentWitness = Get-WitnessType
+    $currentWitnessResource = Get-WitnessResource
 
-    Write-DSCLog "Current: Cluster='$($cluster.Name)' Nodes=[$($currentNodes -join ',')] Witness=$currentWitness"
+    Write-DSCLog "Current: Cluster='$($cluster.Name)' Nodes=[$($currentNodes -join ',')] Witness=$currentWitness Resource='$currentWitnessResource'"
 
     return @{
         ClusterName    = $cluster.Name
         StaticAddress  = $StaticAddress
         Nodes          = $currentNodes
         WitnessType    = $currentWitness
+        WitnessResource = $currentWitnessResource
         Ensure         = 'Present'
     }
 }
@@ -129,6 +161,7 @@ function Test-TargetResource {
         [ValidateSet('None','Disk','Cloud','Share')][string]$WitnessType = 'None',
         [ValidateSet('Present','Absent')][string]$Ensure = 'Present',
         [string]$ClusterIP                 = '',
+        [string]$WitnessDiskName           = '',
         [string]$FileShareWitness          = '',
         [string]$CloudWitnessStorageAccount = '',
         [string]$CloudWitnessStorageKey     = ''
@@ -171,6 +204,16 @@ function Test-TargetResource {
         return $false
     }
 
+    if ($WitnessType -eq 'Disk' -and $WitnessDiskName -and $current.WitnessResource -ne $WitnessDiskName) {
+        Write-DSCLog "Witness resource mismatch (desired disk='$WitnessDiskName', current='$($current.WitnessResource)') - Set required."
+        return $false
+    }
+
+    if ($WitnessType -eq 'Share' -and $FileShareWitness -and $current.WitnessResource -ne $FileShareWitness) {
+        Write-DSCLog "Witness resource mismatch (desired share='$FileShareWitness', current='$($current.WitnessResource)') - Set required."
+        return $false
+    }
+
     Write-DSCLog "Cluster is in desired state."
     return $true
 }
@@ -180,7 +223,7 @@ function Set-TargetResource {
     .SYNOPSIS
         Applies the desired cluster configuration.
     #>
-    [CmdletBinding()]
+    [CmdletBinding(SupportsShouldProcess)]
     param(
         [Parameter(Mandatory)][string]$ClusterName,
         [Parameter(Mandatory)][string]$StaticAddress,
@@ -188,6 +231,7 @@ function Set-TargetResource {
         [ValidateSet('None','Disk','Cloud','Share')][string]$WitnessType = 'None',
         [ValidateSet('Present','Absent')][string]$Ensure = 'Present',
         [string]$ClusterIP                 = '',
+        [string]$WitnessDiskName           = '',
         [string]$FileShareWitness          = '',
         [string]$CloudWitnessStorageAccount = '',
         [string]$CloudWitnessStorageKey     = ''
@@ -199,55 +243,37 @@ function Set-TargetResource {
     if ($Ensure -eq 'Absent') {
         $cluster = Get-ClusterSafe
         if ($cluster) {
-            Write-DSCLog "Removing cluster '$ClusterName'..." 'WARN'
-            Remove-Cluster -Cluster $ClusterName -Force -CleanUpAD -ErrorAction Stop
-            Write-DSCLog "Cluster removed."
+            if ($PSCmdlet.ShouldProcess($ClusterName, 'Remove cluster')) {
+                Write-DSCLog "Removing cluster '$ClusterName'..." 'WARN'
+                Remove-Cluster -Cluster $ClusterName -Force -CleanUpAD -ErrorAction Stop
+                Write-DSCLog "Cluster removed."
+            }
         }
         return
     }
 
     # ── Ensure = Present ─────────────────────────────────────────────────────
-    $cluster = Get-ClusterSafe
+    $null = Import-HVPlatformModule
+    $effectiveClusterIP = if ($ClusterIP) { $ClusterIP } else { $StaticAddress }
+    $reportsPath = Join-Path $env:ProgramData 'HyperVClusterPlatform\Reports'
+    $logPath = Join-Path $env:ProgramData 'HyperVClusterPlatform\Logs'
 
-    # Create cluster if absent
-    if (-not $cluster) {
-        Write-DSCLog "Creating cluster '$ClusterName' at $StaticAddress with nodes [$($Nodes -join ',')]..." 'WARN'
-        New-Cluster -Name $ClusterName -Node $Nodes -StaticAddress $StaticAddress -NoStorage -ErrorAction Stop
-        Write-DSCLog "Cluster created."
+    $platformParams = @{
+        ClusterName          = $ClusterName
+        Nodes                = $Nodes
+        ClusterIP            = $effectiveClusterIP
+        WitnessType          = $WitnessType
+        Mode                 = 'Enforce'
+        ReportsPath          = $reportsPath
+        LogPath              = $logPath
     }
-    else {
-        Write-DSCLog "Cluster '$($cluster.Name)' exists."
-        # Add missing nodes
-        $current = Get-ClusterNodesSafe
-        $toAdd   = $Nodes | Where-Object { $current -notcontains $_ }
-        foreach ($n in $toAdd) {
-            Write-DSCLog "Adding node '$n'..." 'WARN'
-            Add-ClusterNode -Name $n -ErrorAction Stop
-            Write-DSCLog "Node '$n' added."
-        }
-    }
+    if ($WitnessDiskName) { $platformParams['WitnessDiskName'] = $WitnessDiskName }
+    if ($FileShareWitness) { $platformParams['FileShareWitnessPath'] = $FileShareWitness }
+    if ($CloudWitnessStorageAccount) { $platformParams['CloudWitnessStorageAccount'] = $CloudWitnessStorageAccount }
+    if ($CloudWitnessStorageKey) { $platformParams['CloudWitnessStorageKey'] = $CloudWitnessStorageKey }
 
-    # Configure witness
-    switch ($WitnessType) {
-        'None'  { Set-ClusterQuorum -NodeMajority -ErrorAction Stop }
-        'Disk'  {
-            $disk = Get-ClusterAvailableDisk -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($disk) {
-                $added = Add-ClusterDisk -InputObject $disk -PassThru -ErrorAction Stop
-                Set-ClusterQuorum -NodeAndDiskMajority $added.Name -ErrorAction Stop
-            }
-        }
-        'Share' {
-            if ($FileShareWitness) {
-                Set-ClusterQuorum -NodeAndFileShareMajority $FileShareWitness -ErrorAction Stop
-            }
-        }
-        'Cloud' {
-            if (-not $CloudWitnessStorageAccount -or -not $CloudWitnessStorageKey) {
-                throw "WitnessType='Cloud' requires CloudWitnessStorageAccount and CloudWitnessStorageKey."
-            }
-            Set-ClusterQuorum -CloudWitness -AccountName $CloudWitnessStorageAccount -AccessKey $CloudWitnessStorageKey -ErrorAction Stop
-        }
+    if ($PSCmdlet.ShouldProcess($ClusterName, 'Apply cluster state via Invoke-HVClusterPlatform')) {
+        Invoke-HVClusterPlatform @platformParams | Out-Null
     }
 
     Write-DSCLog "Set-TargetResource complete."

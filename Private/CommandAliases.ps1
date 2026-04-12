@@ -38,7 +38,8 @@ function Initialize-HVCommandAliases {
     param()
 
     $modulesToImport = $script:HVPreferredCommands |
-        Select-Object -ExpandProperty Module -Unique
+        ForEach-Object { $_['Module'] } |
+        Select-Object -Unique
 
     foreach ($moduleName in $modulesToImport) {
         if (-not (Get-Module -Name $moduleName) -and (Get-Module -ListAvailable -Name $moduleName)) {

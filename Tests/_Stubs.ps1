@@ -22,6 +22,17 @@ if (Test-PreferredWindowsCommandMissing 'FailoverClusters\Get-ClusterNetwork') {
 if (Test-PreferredWindowsCommandMissing 'FailoverClusters\Get-ClusterResource') { function Get-ClusterResource { [CmdletBinding()] param([string]$Name,[string]$Cluster) } }
 if (Test-PreferredWindowsCommandMissing 'FailoverClusters\Get-ClusterSharedVolume') { function Get-ClusterSharedVolume { [CmdletBinding()] param([string]$Name,[string]$Cluster) } }
 if (Test-PreferredWindowsCommandMissing 'FailoverClusters\Get-ClusterSharedVolumeState') { function Get-ClusterSharedVolumeState { [CmdletBinding()] param([Parameter(ValueFromPipeline)]$InputObject) process { } } }
+if (Test-PreferredWindowsCommandMissing 'FailoverClusters\Test-Cluster') {
+    function Test-Cluster {
+        [CmdletBinding()]
+        param([string[]]$Node)
+
+        [PSCustomObject]@{
+            Succeeded  = $true
+            ReportPath = $null
+        }
+    }
+}
 if (Test-PreferredWindowsCommandMissing 'FailoverClusters\Add-ClusterSharedVolume') { function Add-ClusterSharedVolume { [CmdletBinding()] param([string]$Name) } }
 if (Test-PreferredWindowsCommandMissing 'FailoverClusters\Add-ClusterDisk') { function Add-ClusterDisk { [CmdletBinding()] param($InputObject,[switch]$PassThru) } }
 if (Test-PreferredWindowsCommandMissing 'FailoverClusters\Get-ClusterAvailableDisk') { function Get-ClusterAvailableDisk { [CmdletBinding()] param() } }

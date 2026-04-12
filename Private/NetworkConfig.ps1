@@ -76,7 +76,7 @@ function Set-HVClusterNetworkRoles {
     .PARAMETER LiveMigrationNetworks
         Array of cluster network names to prefer for Live Migration (in priority order).
     #>
-    [CmdletBinding()]
+    [CmdletBinding(SupportsShouldProcess)]
     param(
         [hashtable]$ClusterNetworkRoleMap   = @{},
         [string[]] $LiveMigrationNetworks   = @()
@@ -89,8 +89,10 @@ function Set-HVClusterNetworkRoles {
             if ($ClusterNetworkRoleMap.ContainsKey($net.Name)) {
                 $desired = $ClusterNetworkRoleMap[$net.Name]
                 if ($net.Role -ne $desired) {
-                    Write-HVLog -Message "Network '$($net.Name)': setting Role=$desired (was $($net.Role))." -Level 'WARN'
-                    $net.Role = $desired
+                    if ($PSCmdlet.ShouldProcess($net.Name, "Set cluster network role to $desired")) {
+                        Write-HVLog -Message "Network '$($net.Name)': setting Role=$desired (was $($net.Role))." -Level 'WARN'
+                        $net.Role = $desired
+                    }
                 }
                 else {
                     Write-HVLog -Message "Network '$($net.Name)': Role=$desired already set." -Level 'INFO'
@@ -105,8 +107,10 @@ function Set-HVClusterNetworkRoles {
             foreach ($netName in $LiveMigrationNetworks) {
                 $net = $clusterNets | Where-Object Name -eq $netName
                 if ($net) {
-                    $net.Metric = $priority
-                    Write-HVLog -Message "  LM priority $priority -> '$netName'" -Level 'INFO'
+                    if ($PSCmdlet.ShouldProcess($netName, "Set live migration network priority to $priority")) {
+                        $net.Metric = $priority
+                        Write-HVLog -Message "  LM priority $priority -> '$netName'" -Level 'INFO'
+                    }
                     $priority++
                 }
                 else {

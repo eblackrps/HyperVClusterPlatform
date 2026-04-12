@@ -1,7 +1,19 @@
 # Roadmap
 
-Fifteen completed development rounds delivering a fully production-ready HyperVClusterPlatform.
+Sixteen completed development rounds delivering a fully production-ready HyperVClusterPlatform.
 Each round represents a discrete, shippable improvement.
+
+---
+
+## Round 16 — v21.1.0 ✅ RELEASED
+
+Operational safety and release hardening:
+- Fixed CLI-vs-config mode precedence so explicit `-Mode` values win over JSON defaults
+- Added operation-scoped unique artifact naming for rollback, telemetry, and reporting outputs
+- Surfaced rollback status/actions/errors directly in platform results
+- Corrected fleet audit status semantics and isolated inline fleet temp material
+- Hardened GitHub release automation with exit-checked `gh` execution and packaged release assets
+- Refreshed README, roadmap, changelog, and manifest release notes for the shipped version
 
 ---
 

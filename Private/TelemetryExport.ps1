@@ -18,7 +18,8 @@ function Export-HVTelemetry {
     param(
         [Parameter(Mandatory)]$RunResult,
         [string]$OutputPath     = '.\Reports',
-        [string]$AppendToNDJSON = ''
+        [string]$AppendToNDJSON = '',
+        [int]$MaxArtifactsToKeep = 30
     )
 
     if (-not (Test-Path $OutputPath)) {
@@ -30,17 +31,21 @@ function Export-HVTelemetry {
         timestamp         = (Get-Date).ToString('o')
         host              = $env:COMPUTERNAME
         module            = 'HyperVClusterPlatform'
-        module_version    = '21.0.1'
+        module_version    = Get-HVModuleVersion
         cluster_name      = if ($RunResult.ClusterName) { $RunResult.ClusterName } elseif ($RunResult.TotalClusters) { 'Fleet' } else { $null }
         mode              = $RunResult.Mode
+        status            = $RunResult.Status
+        operation_id      = $RunResult.OperationId
         drift_score       = $RunResult.DriftScore
         drift_details     = $RunResult.DriftDetails
         preflight_passed  = $RunResult.PreFlightPassed
         os_version        = if ($RunResult.OSProfile) { $RunResult.OSProfile.Version } else { $null }
         os_build          = if ($RunResult.OSProfile) { $RunResult.OSProfile.Build }   else { $null }
         log_path          = $RunResult.LogPath
+        structured_log_path = $RunResult.StructuredLogPath
         report_path       = $RunResult.ReportPath
         snapshot_path     = $RunResult.SnapshotPath
+        journal_path      = $RunResult.JournalPath
         health_score      = if ($RunResult.HealthScore) { $RunResult.HealthScore } else { $null }
         health_overall    = if ($RunResult.HealthOverall) { $RunResult.HealthOverall } else { $null }
     }
@@ -53,8 +58,20 @@ function Export-HVTelemetry {
         return $AppendToNDJSON
     }
     else {
-        $path = Join-Path $OutputPath ("Telemetry-{0}.json" -f (Get-Date -Format 'yyyyMMddHHmmss'))
+        $identity = @()
+        if ($RunResult.ClusterName) {
+            $identity += [string]$RunResult.ClusterName
+        }
+        elseif ($RunResult.TotalClusters) {
+            $identity += 'Fleet'
+        }
+        if ($RunResult.Mode) {
+            $identity += [string]$RunResult.Mode
+        }
+
+        $path = Get-HVArtifactPath -Directory $OutputPath -Prefix 'Telemetry' -Extension 'json' -Identity $identity
         $json | Out-File -FilePath $path -Encoding UTF8
+        Invoke-HVArtifactRetention -Path $OutputPath -Filter 'Telemetry-*.json' -MaxFiles $MaxArtifactsToKeep
         Write-HVLog -Message "Telemetry exported: $path" -Level 'INFO'
         return $path
     }

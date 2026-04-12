@@ -1,3 +1,47 @@
+function Get-HVNodeRemoteOSProfile {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)]$Session)
+
+    return Invoke-Command -Session $Session -ScriptBlock {
+        $os    = Get-CimInstance Win32_OperatingSystem
+        $build = [int]$os.BuildNumber
+        switch ($true) {
+            ($build -ge 26100) { [PSCustomObject]@{ Build=$build; Version='2025'; DisplayName='Windows Server 2025' }; break }
+            ($build -ge 20348) { [PSCustomObject]@{ Build=$build; Version='2022'; DisplayName='Windows Server 2022' }; break }
+            ($build -ge 17763) { [PSCustomObject]@{ Build=$build; Version='2019'; DisplayName='Windows Server 2019' }; break }
+            default             { [PSCustomObject]@{ Build=$build; Version='Unknown'; DisplayName=$os.Caption } }
+        }
+    } -ErrorAction Stop
+}
+
+function Get-HVNodeRemoteDomain {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)]$Session)
+
+    return Invoke-Command -Session $Session -ScriptBlock {
+        (Get-CimInstance Win32_ComputerSystem).Domain
+    } -ErrorAction Stop
+}
+
+function Get-HVNodeRemoteFeatures {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$Session,
+        [Parameter(Mandatory)][string[]]$RequiredFeatures
+    )
+
+    return Invoke-Command -Session $Session -ArgumentList @(,$RequiredFeatures) -ScriptBlock {
+        param($features)
+        if (-not (Get-Command Get-WindowsFeature -ErrorAction SilentlyContinue)) {
+            throw 'Get-WindowsFeature is unavailable in the remote session.'
+        }
+        foreach ($f in $features) {
+            $result = Get-WindowsFeature -Name $f -ErrorAction SilentlyContinue
+            [PSCustomObject]@{ Name = $f; State = if ($result) { $result.InstallState } else { 'NotFound' } }
+        }
+    } -ErrorAction Stop
+}
+
 function Test-HVNodeReadiness {
     <#
     .SYNOPSIS
@@ -48,30 +92,19 @@ function Test-HVNodeReadiness {
 
             # 3. OS version (requires WinRM)
             try {
-                $osProfile = Invoke-Command -Session $session -ScriptBlock {
-                    $os    = Get-CimInstance Win32_OperatingSystem
-                    $build = [int]$os.BuildNumber
-                    switch ($true) {
-                        ($build -ge 26100) { [PSCustomObject]@{ Build=$build; Version='2025'; DisplayName='Windows Server 2025' }; break }
-                        ($build -ge 20348) { [PSCustomObject]@{ Build=$build; Version='2022'; DisplayName='Windows Server 2022' }; break }
-                        ($build -ge 17763) { [PSCustomObject]@{ Build=$build; Version='2019'; DisplayName='Windows Server 2019' }; break }
-                        default             { [PSCustomObject]@{ Build=$build; Version='Unknown'; DisplayName=$os.Caption } }
-                    }
-                } -ErrorAction Stop
+                $osProfile = Get-HVNodeRemoteOSProfile -Session $session
                 Write-HVLog -Message "[$node] OS: $($osProfile.DisplayName) (Build $($osProfile.Build))." -Level 'INFO'
                 if ($osProfile.Version -eq 'Unknown') {
                     $failures.Add("[$node] Unsupported OS: $($osProfile.DisplayName).")
                 }
             }
             catch {
-                $warnings.Add("[$node] Could not detect OS via WinRM: $($_.Exception.Message)")
+                $failures.Add("[$node] Could not detect OS via WinRM: $($_.Exception.Message)")
             }
 
             # 4. Domain membership (requires WinRM)
             try {
-                $domain = Invoke-Command -Session $session -ScriptBlock {
-                    (Get-CimInstance Win32_ComputerSystem).Domain
-                } -ErrorAction Stop
+                $domain = Get-HVNodeRemoteDomain -Session $session
                 if ($domain -and $domain -ne 'WORKGROUP') {
                     Write-HVLog -Message "[$node] Domain: '$domain'." -Level 'INFO'
                 }
@@ -80,18 +113,12 @@ function Test-HVNodeReadiness {
                 }
             }
             catch {
-                $warnings.Add("[$node] Could not verify domain membership: $($_.Exception.Message)")
+                $failures.Add("[$node] Could not verify domain membership: $($_.Exception.Message)")
             }
 
             # 5. Required Windows Features (requires WinRM)
             try {
-                $remoteFeatures = Invoke-Command -Session $session -ArgumentList @(,$RequiredFeatures) -ScriptBlock {
-                    param($features)
-                    foreach ($f in $features) {
-                        $result = Get-WindowsFeature -Name $f -ErrorAction SilentlyContinue
-                        [PSCustomObject]@{ Name = $f; State = if ($result) { $result.InstallState } else { 'NotFound' } }
-                    }
-                } -ErrorAction Stop
+                $remoteFeatures = Get-HVNodeRemoteFeatures -Session $session -RequiredFeatures $RequiredFeatures
 
                 foreach ($rf in $remoteFeatures) {
                     if ($rf.State -eq 'Installed') {
@@ -106,7 +133,7 @@ function Test-HVNodeReadiness {
                 }
             }
             catch {
-                $warnings.Add("[$node] Could not check features remotely: $($_.Exception.Message)")
+                $failures.Add("[$node] Could not check features remotely: $($_.Exception.Message)")
             }
 
             try {

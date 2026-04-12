@@ -1,6 +1,6 @@
 # HyperVClusterPlatform
 
-> **v21.0.1** — Production-hardened Hyper-V cluster automation for **Windows Server 2022** and **Windows Server 2025**
+> Production-hardened Hyper-V cluster automation for **Windows Server 2022** and **Windows Server 2025**
 
 A PowerShell module for fully automated Hyper-V failover cluster deployment, compliance management, health monitoring, and fleet orchestration:
 
@@ -14,18 +14,18 @@ A PowerShell module for fully automated Hyper-V failover cluster deployment, com
 - **Storage automation** — Cluster Shared Volume enumeration and drift detection
 - **Full witness support** — Disk, Cloud (Azure Blob), File Share, or None
 - **Health monitoring** — node/resource/quorum/CSV health with 0–100 score
-- **Multi-channel alerting** — email, Microsoft Teams webhook, Slack webhook, Windows Event Log
+- **Multi-channel alerting** — SMTP email, Microsoft Teams webhook, Slack webhook, Windows Event Log
 - **Secret management** — Microsoft.PowerShell.SecretManagement and Windows Credential Manager
 - **Fleet orchestration** — multi-cluster parallel runs with aggregated HTML report
 - **Live migration** — pre-flight readiness checks and orchestrated `Move-ClusterVirtualMachineRole`
 - **Disaster recovery** — DR readiness snapshots and readiness scoring
 - **Certification suite** — 10-domain compliance gate for production sign-off
-- **Real rollback engine** — snapshot-based; removes what was created if enforcement fails
+- **Change-journal rollback** — records mutating actions and replays compensating steps with snapshot fallback
 - **JSON telemetry** — structured metrics alongside every HTML report
 - **File-based rotating logs** — timestamped, color-coded, persisted to disk
 - **JSON config files** — environment profiles (Dev / Staging / Prod) with secret-name resolution
-- **Full Pester test suite** — 127 mocked unit tests across 16 test files, no live cluster required
-- **CI/CD workflows** — PSScriptAnalyzer lint + Pester + smoke validation + optional PSGallery publish on release tags
+- **Full mocked Pester test suite** — operational, safety, release, and metadata coverage with no live cluster required
+- **CI/CD workflows** — lint + `pwsh`/Windows PowerShell validation + manifest smoke + optional PSGallery publish on release tags
 
 ---
 
@@ -33,8 +33,8 @@ A PowerShell module for fully automated Hyper-V failover cluster deployment, com
 
 | Requirement | Detail |
 |---|---|
-| OS | Windows Server 2022 or 2025 |
-| PowerShell | 5.1 or 7+ |
+| OS | Windows Server 2022 or 2025 for supported cluster operations; Windows Server 2019 is detected and allowed with warnings for audit/pre-flight compatibility checks |
+| PowerShell | Windows PowerShell 5.1 or PowerShell 7+ |
 | Windows Features | Failover-Clustering, Hyper-V, Hyper-V-PowerShell, RSAT-Clustering, RSAT-Clustering-PowerShell |
 | Domain | Active Directory domain membership required for cluster CNO |
 | Privileges | Must run as Administrator |
@@ -54,8 +54,8 @@ A PowerShell module for fully automated Hyper-V failover cluster deployment, com
 ## Folder layout
 
 ```
-HyperVClusterPlatform/
-  HyperVClusterPlatform.psd1          # module manifest (v21.0.1)
+  HyperVClusterPlatform/
+  HyperVClusterPlatform.psd1          # module manifest
   HyperVClusterPlatform.psm1          # loader: dot-sources Public + Private
   README.md
   CHANGELOG.md
@@ -95,8 +95,8 @@ HyperVClusterPlatform/
       HVClusterResource.psm1
       HVClusterResource.schema.mof
   Scripts/
-    Update-ModuleVersion.ps1          # bumps .psd1 version from git tags
-    New-Release.ps1                   # creates GitHub release via gh CLI
+    Update-ModuleVersion.ps1          # updates the manifest version
+    New-Release.ps1                   # validates, packages, tags, and creates a GitHub release
   Tests/
     _Stubs.ps1                        # cmdlet stubs for optional Windows modules
     Cluster.Tests.ps1                 # module load + public API tests
@@ -138,6 +138,7 @@ Invoke-HVClusterPlatform `
     -Nodes       @("NODE1","NODE2") `
     -ClusterIP   "10.10.10.10" `
     -WitnessType Disk `
+    -WitnessDiskName "Cluster Disk 3" `
     -Mode        Audit
 
 # Enforce — creates cluster, adds nodes, sets witness
@@ -146,6 +147,7 @@ Invoke-HVClusterPlatform `
     -Nodes       @("NODE1","NODE2") `
     -ClusterIP   "10.10.10.10" `
     -WitnessType Disk `
+    -WitnessDiskName "Cluster Disk 3" `
     -Mode        Enforce
 
 # Enforce with Cloud witness
@@ -180,7 +182,8 @@ Copy-Item .\Config\cluster-config.example.json .\Config\prod.json
 Invoke-HVClusterPlatform -ConfigFile .\Config\prod.json -Environment Prod -Mode Enforce
 ```
 
-See [`Config/cluster-config.example.json`](Config/cluster-config.example.json) for all available fields and the `Environments` override block.
+Use `PlanOnly`, `-WhatIf`, or `-Confirm` to preview cluster changes before a maintenance window.
+See [`Config/cluster-config.example.json`](Config/cluster-config.example.json) for witness targeting, break-glass, telemetry, and retention fields.
 
 ---
 
@@ -195,6 +198,7 @@ Invoke-HVClusterFleet -ConfigFiles @('.\Config\site-a.json','.\Config\site-b.jso
 ```
 
 `Invoke-HVClusterFleet` returns a fleet-level PSCustomObject and writes an HTML roll-up report to `Reports/`.
+Audit fleet runs return `Compliant` or `NonCompliant`; mutating runs return `Succeeded`, `DriftRemaining`, `Planned`, or `Failed`.
 
 ---
 
@@ -221,13 +225,25 @@ Invoke-HVHealthAlertPolicy -AlertThreshold 80 -AlertParams @{
 |---|---|---|
 | `ClusterName` | string | Target cluster name used for the run |
 | `Mode` | string | Audit / Enforce / Remediate |
+| `Status` | string | `Compliant`, `NonCompliant`, `Succeeded`, `DriftRemaining`, `Planned`, `Previewed`, `Blocked`, `FailedPreFlight`, `FailedNodeValidation`, or `Failed` |
+| `OperationId` | string | Correlation ID shared across text logs, structured logs, and telemetry |
 | `DriftScore` | int | 0 (compliant) to 100 (maximum drift) |
 | `DriftDetails` | string[] | Per-check mismatch descriptions |
+| `Plan` | object | Structured change plan generated before enforcement |
 | `ReportPath` | string | Path to HTML compliance report |
 | `SnapshotPath` | string | Path to pre-change JSON snapshot |
+| `JournalPath` | string | Path to the persisted change journal used for rollback |
 | `PreFlightPassed` | bool | Result of local pre-flight checks |
+| `ClusterValidationPassed` | bool? | Result of `Test-Cluster` gating when enabled; `$null` when skipped or not run |
+| `ClusterValidationStatus` | string | `Passed`, `Failed`, `Skipped`, or `NotRun` |
+| `ClusterValidationReport` | string | `Test-Cluster` report path when available |
 | `NodeValidationResults` | object[] | Per-node readiness results |
+| `RollbackStatus` | string | `NotNeeded`, `Succeeded`, `Partial`, or `Failed` |
+| `RollbackActions` | string[] | Ordered rollback actions performed after an enforcement failure |
+| `RollbackErrors` | string[] | Rollback errors that still require operator follow-up |
 | `LogPath` | string | Active log file path |
+| `StructuredLogPath` | string | NDJSON log path for machine-readable correlation |
+| `TelemetryPath` | string | JSON telemetry artifact emitted for the run |
 | `OSProfile` | object | Version, Build, DisplayName |
 
 ---
@@ -241,7 +257,7 @@ Install-Module Pester -MinimumVersion 5.0 -Force -Scope CurrentUser
 Invoke-Pester .\Tests -Output Detailed
 ```
 
-All 127 tests use mocked cmdlets — no live Hyper-V cluster needed.
+The test suite uses mocked cmdlets and isolated temp artifacts, so it runs without a live Hyper-V cluster.
 
 ---
 
@@ -251,6 +267,12 @@ All 127 tests use mocked cmdlets — no live Hyper-V cluster needed.
 |---|---|
 | `-SkipPreFlight` | Skip local machine pre-flight checks (faster, less safe) |
 | `-SkipNodeValidation` | Skip per-node WinRM + feature checks |
+| `-SkipClusterValidation` | Skip `Test-Cluster`; blocked for Enforce/Remediate unless `-BreakGlass` is set |
+| `-BreakGlass` | Explicitly acknowledge unsafe skip flags during mutating runs |
+| `-PlanOnly` | Return the computed change plan without mutating the cluster |
+| `-EmitTelemetry` | Enable or disable JSON telemetry export for the run |
+| `-RetainArtifactCount` | Keep only the newest N reports, snapshots, telemetry files, and logs |
+| `-SkipArtifactPersistence` | Audit-only mode that avoids writing reports/snapshots/telemetry to disk |
 | `-LogPath` | Override log directory |
 | `-ReportsPath` | Override reports directory |
 
@@ -269,11 +291,14 @@ Get-Command -Module HyperVClusterPlatform
 
 ## Notes
 
-- **Rollback** uses `ClusterExistedBefore` from the snapshot to decide whether to destroy the cluster entirely or only remove nodes added during enforcement. It cannot guarantee a perfect rollback in all partial-failure scenarios — always review the log.
+- **Rollback** uses both the pre-change snapshot and the persisted change journal. Cluster creation, node addition, and witness changes are reversed automatically where possible, but operators should still review the run log before declaring recovery complete.
+- **Alert policy semantics** — `Invoke-HVHealthAlertPolicy` returns `AlertRequired`, `AlertAttempted`, `AlertDelivered`, and `AlertFired` so dashboards can distinguish threshold breaches from actual delivery.
 - **Cloud witness** requires an Azure Blob Storage account with LRS redundancy. Provide the storage account name and one of the two access keys.
 - **Secrets** — never commit `Config/prod.json` or similar files containing real credentials. The `.gitignore` excludes them by pattern. Use `CloudWitnessStorageKeySecretName` and a registered SecretManagement vault instead.
-- **DSC resource** (`DSC/HVClusterResource`) provides a functional `Get-/Test-/Set-TargetResource` implementation wired to the cluster automation engine.
-- **Certification** — `Invoke-HVCertificationSuite` runs 10 compliance domains and requires all to pass before returning `Certified = $true`. Intended as a production go-live gate.
+- **PowerShell engine compatibility** — Windows PowerShell 5.1 and PowerShell 7 are both validated in CI. `Invoke-HVClusterFleet -Parallel` requires PowerShell 7; Windows PowerShell 5.1 falls back to sequential execution.
+- **DSC resource** (`DSC/HVClusterResource`) delegates Ensure=Present enforcement to `Invoke-HVClusterPlatform` so quorum safety, rollback journaling, and guardrails stay aligned.
+- **Certification** — `Invoke-HVCertificationSuite` runs 10 compliance domains and now expects evidence-backed desired policy inputs for network, storage, placement, and secrets hygiene before returning `Certified = $true`.
+- **GitHub releases** — the release process now produces a versioned ZIP package asset alongside the tagged GitHub release. PSGallery publication continues to flow from the release-tag CI job when the repository secret is configured.
 
 ---
 
